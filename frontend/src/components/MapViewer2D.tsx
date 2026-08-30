@@ -1,21 +1,18 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
 import { GISData, SimulationResult, DamagedBuilding, SatelliteMapMode } from '../types';
 import {
-  MapPin,
-  Navigation,
-  Compass,
-  Crosshair,
-  AlertCircle,
-  Info,
-  Activity,
   Satellite,
   Layers,
   Radio,
   Sliders,
   Split,
   Eye,
-  CheckCircle2,
-  Sparkles
+  Activity,
+  MapPin,
+  Maximize2,
+  Crosshair,
+  Bug
 } from 'lucide-react';
 
 interface MapViewer2DProps {
@@ -41,17 +38,14 @@ interface MapViewer2DProps {
   onSelectBuilding?: (building: any) => void;
 }
 
-interface ProbePoint {
-  gridX: number;
-  gridY: number;
-  elevation: number;
-  currentDepth: number;
-  peakDepth: number;
-  velocity: number;
-  sarBackscatterDb: number;
-  depthHistory: number[];
-  screenX: number;
-  screenY: number;
+interface ProbeInfo {
+  lat: number;
+  lng: number;
+  elevation_m: number;
+  depth_m: number;
+  peak_depth_m: number;
+  velocity_ms: number;
+  locality: string;
 }
 
 export const MapViewer2D: React.FC<MapViewer2DProps> = ({
@@ -61,460 +55,290 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
   layerVisibility,
   mapMode = 'satellite_flood',
   onMapModeChange,
-  floodOpacity = 0.65,
+  floodOpacity = 0.55,
   onFloodOpacityChange,
   beforeAfterMode = false,
   onToggleBeforeAfter,
   damagedBuildings,
   onSelectBuilding
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const satelliteImageRef = useRef<HTMLImageElement | null>(null);
-  const [isImageLoaded, setIsImageLoaded] = useState<boolean>(false);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const floodCanvasLayerRef = useRef<L.ImageOverlay | null>(null);
+  const markersGroupRef = useRef<L.LayerGroup | null>(null);
+  const debugGroupRef = useRef<L.LayerGroup | null>(null);
 
-  const [probe, setProbe] = useState<ProbePoint | null>(null);
-  const [zoom, setZoom] = useState<number>(1);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [showDebug, setShowDebug] = useState<boolean>(false);
+  const [probe, setProbe] = useState<ProbeInfo | null>(null);
 
-  // Split-screen comparison slider position (percentage 0 to 100)
-  const [splitPos, setSplitPos] = useState<number>(50);
-  const isSplitDragging = useRef<boolean>(false);
+  // Center coordinate for Vijayawada & Prakasam Barrage
+  const centerLat = 16.5065;
+  const centerLng = 80.6050;
 
-  const grid_size = gisData.grid_size;
-  const currentSnapshot = simulation?.snapshots[currentTimestep] || null;
-  const opticalMeta = gisData.satellite_telemetry?.optical;
-  const sarMeta = gisData.satellite_telemetry?.sar_radar;
+  // Geographic bounds for Vijayawada simulation domain
+  const bounds: L.LatLngBoundsExpression = [
+    [16.4800, 80.5750], // South-West (Tadepalli/Undavalli)
+    [16.5400, 80.6800]  // North-East (Vijayawada Urban / Gunadala)
+  ];
 
-  // Load satellite image tiles / composite
+  // 1. Initialize Real Leaflet Map with True Satellite Tiles
   useEffect(() => {
-    // High-resolution satellite basemap for Vijayawada (16.50°N, 80.64°E)
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    // Authentic ESRI World Imagery Tile / Sentinel-2 Composite for Vijayawada region
-    img.src = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/14/7354/11860';
+    if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    img.onload = () => {
-      satelliteImageRef.current = img;
-      setIsImageLoaded(true);
-    };
-    img.onerror = () => {
-      // Fallback to high-definition raster generator if tile service is offline
-      setIsImageLoaded(false);
-    };
-  }, [gisData.location]);
+    const map = L.map(mapContainerRef.current, {
+      center: [centerLat, centerLng],
+      zoom: 14,
+      minZoom: 11,
+      maxZoom: 19,
+      zoomControl: false,
+      attributionControl: false
+    });
 
-  // Render 2D Canvas Map
-  const renderMap = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    // Add Esri World Imagery (Legitimate, high-resolution global satellite imagery)
+    const esriSatellite = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        attribution: 'Source: Esri, Maxar, Earthstar Geographics, CNES/Airbus DS, USDA FSA, USGS, Aerogrid, IGN, IGP, and the GIS User Community'
+      }
+    ).addTo(map);
+
+    tileLayerRef.current = esriSatellite;
+
+    // Layer groups for markers and overlays
+    const markersGroup = L.layerGroup().addTo(map);
+    markersGroupRef.current = markersGroup;
+
+    const debugGroup = L.layerGroup().addTo(map);
+    debugGroupRef.current = debugGroup;
+
+    // Zoom control in bottom right
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // Click handler for point inspection
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      // Calculate normalized grid position
+      const minLat = 16.4800, maxLat = 16.5400;
+      const minLon = 80.5750, maxLon = 80.6800;
+      const grid_size = gisData.grid_size;
+
+      const normX = (lng - minLon) / (maxLon - minLon);
+      const normY = (maxLat - lat) / (maxLat - minLat);
+
+      const gx = Math.min(grid_size - 1, Math.max(0, Math.floor(normX * grid_size)));
+      const gy = Math.min(grid_size - 1, Math.max(0, Math.floor(normY * grid_size)));
+
+      const currentSnap = simulation?.snapshots[currentTimestep];
+      const curDepth = currentSnap?.depth_grid[gy]?.[gx] ?? 0.0;
+      const peakDepth = simulation?.peak_depth_grid[gy]?.[gx] ?? 0.0;
+      const vel = currentSnap?.velocity_grid[gy]?.[gx] ?? 0.0;
+      const elev = gisData.dem_grid[gy]?.[gx] ?? 18.5;
+
+      let locality = "Vijayawada Urban";
+      if (lat < 16.505) locality = "Tadepalli / South Bank";
+      else if (lng < 80.605) locality = "Indrakeeladri / Bhavanipuram";
+      else locality = "Krishna Lanka / Governorpet";
+
+      setProbe({
+        lat: Number(lat.toFixed(5)),
+        lng: Number(lng.toFixed(5)),
+        elevation_m: Number(elev.toFixed(1)),
+        depth_m: Number(curDepth.toFixed(2)),
+        peak_depth_m: Number(peakDepth.toFixed(2)),
+        velocity_ms: Number(vel.toFixed(2)),
+        locality
+      });
+    });
+
+    mapInstanceRef.current = map;
+
+    return () => {
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, []);
+
+  // 2. Switch Real Map Tile Providers based on Selected Mode
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+
+    if (tileLayerRef.current) {
+      mapInstanceRef.current.removeLayer(tileLayerRef.current);
+    }
+
+    let newTileLayer: L.TileLayer;
+
+    if (mapMode === 'street_carto') {
+      // CartoDB Voyager / OpenStreetMap Street Map
+      newTileLayer = L.tileLayer(
+        'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+        {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap contributors © CARTO'
+        }
+      );
+    } else if (mapMode === 'sar_radar') {
+      // High-contrast Carto Dark for SAR-style radar backscatter base
+      newTileLayer = L.tileLayer(
+        'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+        {
+          maxZoom: 19,
+          attribution: 'SAR Radar Style Base: © CARTO © OpenStreetMap'
+        }
+      );
+    } else {
+      // Default: Genuine Esri World Imagery (High-Resolution Real Satellite)
+      newTileLayer = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+          attribution: 'Imagery © Esri, Maxar, Earthstar Geographics, CNES/Airbus DS, USDA FSA, USGS'
+        }
+      );
+    }
+
+    newTileLayer.addTo(mapInstanceRef.current);
+    tileLayerRef.current = newTileLayer;
+  }, [mapMode]);
+
+  // 3. Render Smooth, Georeferenced Semi-Transparent Flood Inundation Canvas Overlay
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+
+    const currentSnap = simulation?.snapshots[currentTimestep];
+    const shouldShowFlood = (mapMode === 'satellite_flood' || mapMode === 'flood_only' || mapMode === 'street_carto' || mapMode === 'sar_radar') && layerVisibility.floodDepth && currentSnap;
+
+    if (floodCanvasLayerRef.current) {
+      mapInstanceRef.current.removeLayer(floodCanvasLayerRef.current);
+      floodCanvasLayerRef.current = null;
+    }
+
+    if (!shouldShowFlood) return;
+
+    // Create an offscreen smooth interpolated canvas
+    const grid_size = gisData.grid_size;
+    const canvas = document.createElement('canvas');
+    const res = 512; // High-resolution smooth raster
+    canvas.width = res;
+    canvas.height = res;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
-    const cellSize = (Math.min(width, height) / grid_size) * zoom;
-    const offsetX = (width - grid_size * cellSize) / 2 + pan.x;
-    const offsetY = (height - grid_size * cellSize) / 2 + pan.y;
+    const depths = currentSnap.depth_grid;
 
-    ctx.clearRect(0, 0, width, height);
+    // Create smoothed flood raster
+    const imgData = ctx.createImageData(res, res);
+    const data = imgData.data;
 
-    const dem = gisData.dem_grid;
-    const minElev = gisData.min_elevation;
-    const maxElev = gisData.max_elevation;
-    const sarGrid = sarMeta?.backscatter_grid_db;
+    for (let py = 0; py < res; py++) {
+      const gyFloat = (py / res) * (grid_size - 1);
+      const gy0 = Math.floor(gyFloat);
+      const gy1 = Math.min(grid_size - 1, gy0 + 1);
+      const dy = gyFloat - gy0;
 
-    // 1. Base Layer Rendering based on Selected Map Mode
-    if (mapMode === 'sar_radar' && sarGrid) {
-      // Sentinel-1 SAR Calibrated Radar Backscatter Mode (Sigma0 dB)
-      for (let y = 0; y < grid_size; y++) {
-        for (let x = 0; x < grid_size; x++) {
-          const db = sarGrid[y][x];
-          // Map -25 dB (black/water) to 0 dB (white/urban)
-          const norm = Math.max(0.0, Math.min(1.0, (db + 25.0) / 25.0));
-          const gray = Math.floor(norm * 255);
-          ctx.fillStyle = `rgb(${gray}, ${gray}, ${gray})`;
-          ctx.fillRect(offsetX + x * cellSize, offsetY + y * cellSize, cellSize + 0.5, cellSize + 0.5);
-        }
-      }
-    } else if (mapMode === 'street_carto') {
-      // Street / Cartographic Vector Style
-      for (let y = 0; y < grid_size; y++) {
-        for (let x = 0; x < grid_size; x++) {
-          const elev = dem[y][x];
-          if (elev < 15.0) {
-            ctx.fillStyle = '#0284c7'; // River Blue
-          } else if (elev < 26.0) {
-            ctx.fillStyle = '#1e293b'; // Slate Urban Land
+      for (let px = 0; px < res; px++) {
+        const gxFloat = (px / res) * (grid_size - 1);
+        const gx0 = Math.floor(gxFloat);
+        const gx1 = Math.min(grid_size - 1, gx0 + 1);
+        const dx = gxFloat - gx0;
+
+        // Bilinear interpolation for smooth, realistic water body boundary
+        const d00 = depths[gy0]?.[gx0] || 0;
+        const d10 = depths[gy0]?.[gx1] || 0;
+        const d01 = depths[gy1]?.[gx0] || 0;
+        const d11 = depths[gy1]?.[gx1] || 0;
+
+        const dInterp = (1 - dy) * ((1 - dx) * d00 + dx * d10) + dy * ((1 - dx) * d01 + dx * d11);
+
+        const idx = (py * res + px) * 4;
+
+        if (dInterp > 0.05) {
+          let r = 2, g = 132, b = 199;
+          if (dInterp < 0.3) {
+            r = 56; g = 189; b = 248; // Light blue
+          } else if (dInterp < 1.0) {
+            r = 2; g = 132; b = 199;  // Medium blue
+          } else if (dInterp < 2.0) {
+            r = 30; g = 58; b = 138;  // Deep riverine blue
           } else {
-            ctx.fillStyle = '#334155'; // Hill Rock
+            r = 225; g = 29; b = 72;  // Severe incursion red
           }
-          ctx.fillRect(offsetX + x * cellSize, offsetY + y * cellSize, cellSize + 0.5, cellSize + 0.5);
-        }
-      }
-    } else if (mapMode === 'flood_only') {
-      // Pure Flood Mask on Neutral Dark Canvas
-      ctx.fillStyle = '#070d18';
-      ctx.fillRect(offsetX, offsetY, grid_size * cellSize, grid_size * cellSize);
-    } else {
-      // Default: Satellite Optical Imagery Base
-      if (satelliteImageRef.current && isImageLoaded) {
-        ctx.drawImage(
-          satelliteImageRef.current,
-          offsetX,
-          offsetY,
-          grid_size * cellSize,
-          grid_size * cellSize
-        );
-      } else {
-        // High-definition synthetic remote sensing terrain synthesis
-        for (let y = 0; y < grid_size; y++) {
-          for (let x = 0; x < grid_size; x++) {
-            const elev = dem[y][x];
-            const normElev = (elev - minElev) / (maxElev - minElev || 1);
 
-            if (elev < 15.0) {
-              // Deep Krishna River Channel: Deep Slate Blue
-              ctx.fillStyle = '#0c1a2e';
-            } else if (elev < 26.0) {
-              // Vijayawada / Tadepalli Plain: Earth Olive Green/Slate
-              const r = Math.floor(22 + normElev * 20);
-              const g = Math.floor(38 + normElev * 30);
-              const b = Math.floor(28 + normElev * 15);
-              ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-            } else {
-              // Indrakeeladri / Gunadala Hills: Rocky Brown Terrain
-              const r = Math.floor(65 + normElev * 50);
-              const g = Math.floor(50 + normElev * 30);
-              const b = Math.floor(35 + normElev * 20);
-              ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-            }
-            ctx.fillRect(offsetX + x * cellSize, offsetY + y * cellSize, cellSize + 0.5, cellSize + 0.5);
-          }
-        }
-      }
-    }
-
-    // 2. Semi-Transparent Dynamic Flood Inundation Overlay
-    const shouldRenderFlood = (mapMode === 'satellite_flood' || mapMode === 'flood_only' || mapMode === 'street_carto') && layerVisibility.floodDepth && currentSnapshot;
-
-    if (shouldRenderFlood) {
-      const depthGrid = currentSnapshot.depth_grid;
-      const splitLimitX = beforeAfterMode ? offsetX + (grid_size * cellSize * (splitPos / 100)) : width;
-
-      for (let y = 0; y < grid_size; y++) {
-        for (let x = 0; x < grid_size; x++) {
-          const px = offsetX + x * cellSize;
-          // If beforeAfterMode is active, only render flood to the right of splitPos
-          if (beforeAfterMode && px < splitLimitX) continue;
-
-          const depth = depthGrid[y][x];
-          if (depth > 0.02) {
-            let r = 2, g = 132, b = 199;
-            if (depth < 0.3) {
-              r = 56; g = 189; b = 248; // Light Blue Shallow
-            } else if (depth < 1.0) {
-              r = 2; g = 132; b = 199;  // Medium Inundation
-            } else if (depth < 2.0) {
-              r = 30; g = 58; b = 138;  // Deep Flood
-            } else {
-              r = 225; g = 29; b = 72;  // Severe Red
-            }
-
-            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${floodOpacity})`;
-            ctx.fillRect(px, offsetY + y * cellSize, cellSize + 0.5, cellSize + 0.5);
-          }
-        }
-      }
-    }
-
-    // 3. Observed Satellite Reference Layer (ISRO / Sentinel-1 SAR Mask)
-    if (layerVisibility.observedSatellite && gisData.observed_satellite) {
-      const satMask = gisData.observed_satellite.grid_mask;
-      ctx.fillStyle = 'rgba(168, 85, 247, 0.45)'; // Purple overlay
-      ctx.strokeStyle = '#c084fc';
-      ctx.lineWidth = 1.2;
-
-      for (let y = 0; y < grid_size; y++) {
-        for (let x = 0; x < grid_size; x++) {
-          if (satMask[y] && satMask[y][x] > 0.5) {
-            const px = offsetX + x * cellSize;
-            const py = offsetY + y * cellSize;
-            ctx.fillRect(px, py, cellSize, cellSize);
-            ctx.strokeRect(px, py, cellSize, cellSize);
-          }
-        }
-      }
-    }
-
-    // 4. Flow Velocity Particles / Streamlines
-    if (layerVisibility.velocityVectors && currentSnapshot) {
-      const velGrid = currentSnapshot.velocity_grid;
-      const depthGrid = currentSnapshot.depth_grid;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.lineWidth = 1.2;
-
-      for (let y = 1; y < grid_size - 1; y += 3) {
-        for (let x = 1; x < grid_size - 1; x += 3) {
-          const vel = velGrid[y][x];
-          const depth = depthGrid[y][x];
-          if (depth > 0.05 && vel > 0.08) {
-            const px = offsetX + (x + 0.5) * cellSize;
-            const py = offsetY + (y + 0.5) * cellSize;
-
-            const gradX = dem[y][x + 1] - dem[y][x - 1];
-            const gradY = dem[y + 1][x] - dem[y - 1][x];
-            const angle = Math.atan2(-gradY, -gradX);
-            const arrowLen = Math.min(cellSize * 1.3, 3 + vel * 3.2);
-
-            ctx.beginPath();
-            ctx.moveTo(px, py);
-            ctx.lineTo(px + Math.cos(angle) * arrowLen, py + Math.sin(angle) * arrowLen);
-            ctx.stroke();
-
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.beginPath();
-            ctx.arc(px + Math.cos(angle) * arrowLen, py + Math.sin(angle) * arrowLen, 1.5, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-    }
-
-    // 5. Road Networks (NH-16, NH-65, MG Road)
-    if (layerVisibility.roads) {
-      const roads = gisData.assets.roads;
-      const depthGrid = currentSnapshot?.depth_grid;
-
-      roads.forEach((road) => {
-        const sx = offsetX + (road.start_x + 0.5) * cellSize;
-        const sy = offsetY + (road.start_y + 0.5) * cellSize;
-        const ex = offsetX + (road.end_x + 0.5) * cellSize;
-        const ey = offsetY + (road.end_y + 0.5) * cellSize;
-
-        let roadDepth = 0;
-        if (depthGrid) {
-          roadDepth = Math.max(depthGrid[road.start_y][road.start_x] || 0, depthGrid[road.end_y][road.end_x] || 0);
-        }
-
-        ctx.strokeStyle = roadDepth < 0.15 ? '#22c55e' : roadDepth < 0.30 ? '#eab308' : '#ef4444';
-        ctx.lineWidth = road.critical_evacuation_route ? 3.2 : 1.8;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(ex, ey);
-        ctx.stroke();
-      });
-    }
-
-    // 6. Buildings (OSM Footprints)
-    if (layerVisibility.buildings) {
-      const buildings = gisData.assets.buildings;
-      const depthGrid = currentSnapshot?.depth_grid;
-
-      buildings.forEach((b) => {
-        const bx = offsetX + b.grid_x * cellSize;
-        const by = offsetY + b.grid_y * cellSize;
-        const bDepth = depthGrid ? depthGrid[b.grid_y][b.grid_x] || 0 : 0;
-
-        if (bDepth <= 0.05) {
-          ctx.fillStyle = '#64748b';
-          ctx.strokeStyle = '#94a3b8';
-        } else if (bDepth < 0.3) {
-          ctx.fillStyle = '#eab308';
-          ctx.strokeStyle = '#fef08a';
+          data[idx] = r;
+          data[idx + 1] = g;
+          data[idx + 2] = b;
+          // Smooth alpha transparency at water's edge
+          const edgeAlpha = Math.min(1.0, (dInterp - 0.05) / 0.15);
+          data[idx + 3] = Math.floor(edgeAlpha * floodOpacity * 255);
         } else {
-          ctx.fillStyle = '#ef4444';
-          ctx.strokeStyle = '#fecaca';
+          data[idx + 3] = 0; // Transparent dry land
         }
-
-        ctx.lineWidth = 1;
-        ctx.fillRect(bx + 1, by + 1, cellSize - 2, cellSize - 2);
-        ctx.strokeRect(bx + 1, by + 1, cellSize - 2, cellSize - 2);
-      });
-    }
-
-    // 7. Critical Infrastructure & Landmarks
-    if (layerVisibility.criticalFacilities) {
-      const facilities = gisData.assets.critical_facilities;
-      const depthGrid = currentSnapshot?.depth_grid;
-
-      facilities.forEach((fac) => {
-        const fx = offsetX + (fac.grid_x + 0.5) * cellSize;
-        const fy = offsetY + (fac.grid_y + 0.5) * cellSize;
-        const fDepth = depthGrid ? depthGrid[fac.grid_y][fac.grid_x] || 0 : 0;
-
-        ctx.beginPath();
-        ctx.arc(fx, fy, 8, 0, Math.PI * 2);
-        ctx.fillStyle = fDepth > 0.1 ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 197, 94, 0.3)';
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(fx, fy, 5, 0, Math.PI * 2);
-        ctx.fillStyle = fac.type === 'Hospital' ? '#ef4444' : fac.type.includes('Barrage') ? '#0284c7' : '#a855f7';
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      });
-    }
-
-    // 8. Before/After Split Line Renderer
-    if (beforeAfterMode) {
-      const splitX = offsetX + (grid_size * cellSize * (splitPos / 100));
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(splitX, offsetY);
-      ctx.lineTo(splitX, offsetY + grid_size * cellSize);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Badges
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(splitX - 85, offsetY + 12, 80, 22);
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '10px monospace';
-      ctx.fillText('BEFORE FLOOD', splitX - 80, offsetY + 27);
-
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(splitX + 5, offsetY + 12, 80, 22);
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = '10px monospace';
-      ctx.fillText('PEAK FLOOD', splitX + 10, offsetY + 27);
-    }
-
-    // 9. Probe Reticle
-    if (probe) {
-      const px = offsetX + (probe.gridX + 0.5) * cellSize;
-      const py = offsetY + (probe.gridY + 0.5) * cellSize;
-
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(px, py, 9, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(px - 14, py);
-      ctx.lineTo(px + 14, py);
-      ctx.moveTo(px, py - 14);
-      ctx.lineTo(px, py + 14);
-      ctx.stroke();
-    }
-  }, [
-    gisData,
-    simulation,
-    currentTimestep,
-    layerVisibility,
-    mapMode,
-    floodOpacity,
-    beforeAfterMode,
-    splitPos,
-    zoom,
-    pan,
-    probe,
-    isImageLoaded
-  ]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (containerRef.current && canvasRef.current) {
-        canvasRef.current.width = containerRef.current.clientWidth;
-        canvasRef.current.height = containerRef.current.clientHeight;
-        renderMap();
       }
-    };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [renderMap]);
+    }
+    ctx.putImageData(imgData, 0, 0);
 
+    // Convert canvas to Leaflet ImageOverlay on accurate geographic bounds
+    const dataUrl = canvas.toDataURL();
+    const overlay = L.imageOverlay(dataUrl, bounds, {
+      opacity: 1.0,
+      interactive: false
+    });
+
+    overlay.addTo(mapInstanceRef.current);
+    floodCanvasLayerRef.current = overlay;
+  }, [simulation, currentTimestep, mapMode, floodOpacity, layerVisibility.floodDepth]);
+
+  // 4. Render Authentic Landmark Labels & Critical Facilities on Real Map
   useEffect(() => {
-    renderMap();
-  }, [renderMap]);
+    if (!markersGroupRef.current) return;
+    markersGroupRef.current.clearLayers();
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
+    if (!layerVisibility.criticalFacilities) return;
 
-    const cellSize = (Math.min(canvas.width, canvas.height) / grid_size) * zoom;
-    const offsetX = (canvas.width - grid_size * cellSize) / 2 + pan.x;
-    const offsetY = (canvas.height - grid_size * cellSize) / 2 + pan.y;
+    // Real landmarks in Vijayawada
+    const landmarks = [
+      { name: "Prakasam Barrage", lat: 16.5065, lon: 80.6050, type: "Barrage", status: "70 Gates Active" },
+      { name: "Sri Durga Temple (Indrakeeladri)", lat: 16.5135, lon: 80.6062, type: "Temple", status: "Safe High Ground" },
+      { name: "GGH Vijayawada Hospital", lat: 16.5150, lon: 80.6350, type: "Hospital", status: "Emergency Ready" },
+      { name: "Pandit Nehru Bus Station (PNBS)", lat: 16.5080, lon: 80.6210, type: "Transit", status: "Evacuation Hub" },
+      { name: "Tadepalli Substation", lat: 16.4850, lon: 80.6120, type: "Power", status: "Flood Watch" },
+    ];
 
-    const gx = Math.floor((clickX - offsetX) / cellSize);
-    const gy = Math.floor((clickY - offsetY) / cellSize);
+    landmarks.forEach((lm) => {
+      const iconHtml = `
+        <div class="flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-900/90 text-slate-100 text-[10px] font-semibold border border-cyan-500/40 shadow-lg backdrop-blur-sm whitespace-nowrap">
+          <span class="w-2 h-2 rounded-full ${lm.type === 'Hospital' ? 'bg-rose-500' : lm.type === 'Barrage' ? 'bg-cyan-400' : 'bg-amber-400'} animate-pulse"></span>
+          <span>${lm.name}</span>
+        </div>
+      `;
 
-    if (gx >= 0 && gx < grid_size && gy >= 0 && gy < grid_size) {
-      const elev = gisData.dem_grid[gy][gx];
-      const curDepth = currentSnapshot?.depth_grid[gy][gx] || 0;
-      const peakDepth = simulation?.peak_depth_grid[gy][gx] || 0;
-      const vel = currentSnapshot?.velocity_grid[gy][gx] || 0;
-      const sarDb = sarMeta?.backscatter_grid_db[gy]?.[gx] ?? -12.5;
-      const history = simulation ? simulation.snapshots.map(s => s.depth_grid[gy][gx]) : [];
-
-      setProbe({
-        gridX: gx,
-        gridY: gy,
-        elevation: elev,
-        currentDepth: curDepth,
-        peakDepth: peakDepth,
-        velocity: vel,
-        sarBackscatterDb: sarDb,
-        depthHistory: history,
-        screenX: clickX,
-        screenY: clickY
+      const customIcon = L.divIcon({
+        html: iconHtml,
+        className: 'custom-map-label',
+        iconSize: [120, 20],
+        iconAnchor: [60, 10]
       });
-    } else {
-      setProbe(null);
+
+      const marker = L.marker([lm.lat, lm.lon], { icon: customIcon });
+      markersGroupRef.current?.addLayer(marker);
+    });
+  }, [layerVisibility.criticalFacilities]);
+
+  const recenterMap = () => {
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setView([centerLat, centerLng], 14, { animate: true });
     }
   };
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomDelta = e.deltaY < 0 ? 1.15 : 0.85;
-    setZoom(prev => Math.min(3.5, Math.max(0.6, prev * zoomDelta)));
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
-    }
-  };
-
-  const handleMouseUp = () => setIsDragging(false);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full bg-[#070d18] overflow-hidden select-none">
-      <canvas
-        ref={canvasRef}
-        onClick={handleCanvasClick}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        className="w-full h-full cursor-crosshair block"
-      />
+    <div className="relative w-full h-full bg-[#070d18] overflow-hidden select-none">
+      {/* Real Leaflet Map DOM Container */}
+      <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Top Floating Controls: Remote Sensing Layer Modes & Opacity */}
-      <div className="absolute top-4 left-4 z-10 flex flex-col space-y-2 max-w-xl">
-        {/* Layer Mode Selector Bar */}
+      {/* Top Floating Remote Sensing Control Bar */}
+      <div className="absolute top-4 left-4 z-[1000] flex flex-col space-y-2 max-w-xl">
         <div className="glass-panel p-1.5 rounded-2xl flex items-center space-x-1 border border-slate-800 shadow-2xl text-xs">
           <button
             onClick={() => onMapModeChange?.('satellite_flood')}
@@ -525,7 +349,7 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
             }`}
           >
             <Satellite className="w-3.5 h-3.5" />
-            <span>Satellite + Flood</span>
+            <span>Satellite + Flood (Default)</span>
           </button>
 
           <button
@@ -537,7 +361,18 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
             }`}
           >
             <Eye className="w-3.5 h-3.5" />
-            <span>Optical Base</span>
+            <span>Satellite Only</span>
+          </button>
+
+          <button
+            onClick={() => onMapModeChange?.('street_carto')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl font-medium transition-all ${
+              mapMode === 'street_carto'
+                ? 'bg-slate-700 text-white'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <span>Street Map</span>
           </button>
 
           <button
@@ -549,35 +384,19 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
             }`}
           >
             <Radio className="w-3.5 h-3.5 text-purple-300" />
-            <span>Sentinel-1 SAR</span>
+            <span>SAR Radar</span>
           </button>
 
           <button
-            onClick={() => onMapModeChange?.('street_carto')}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl font-medium transition-all ${
-              mapMode === 'street_carto'
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
+            onClick={recenterMap}
+            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Recenter to Prakasam Barrage / Vijayawada"
           >
-            <span>Carto</span>
-          </button>
-
-          <button
-            onClick={onToggleBeforeAfter}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl font-medium transition-all border ${
-              beforeAfterMode
-                ? 'bg-amber-600/30 text-amber-200 border-amber-500 font-bold'
-                : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Split-Screen Comparison: Before Flood vs Peak Inundation"
-          >
-            <Split className="w-3.5 h-3.5 text-amber-400" />
-            <span>Split View</span>
+            <Crosshair className="w-4 h-4 text-cyan-400" />
           </button>
         </div>
 
-        {/* Flood Opacity Slider Floating Widget */}
+        {/* Flood Opacity Slider */}
         <div className="glass-panel px-3 py-2 rounded-xl flex items-center space-x-3 text-xs border border-slate-800 shadow-xl text-slate-300">
           <span className="flex items-center space-x-1.5 font-medium">
             <Sliders className="w-3.5 h-3.5 text-cyan-400" />
@@ -595,49 +414,45 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
           <span className="font-mono text-cyan-400 font-bold w-10 text-right">
             {Math.round(floodOpacity * 100)}%
           </span>
+          <span className="text-slate-500 text-[10px]">• Land features visible beneath</span>
         </div>
       </div>
 
-      {/* Satellite Sensor Telemetry Metadata Badge */}
-      <div className="absolute top-4 right-4 z-10 glass-panel p-3 rounded-2xl border border-slate-800 shadow-2xl text-xs space-y-1.5 max-w-xs text-slate-300">
+      {/* Satellite Telemetry & Location Badge */}
+      <div className="absolute top-4 right-4 z-[1000] glass-panel p-3 rounded-2xl border border-slate-800 shadow-2xl text-xs space-y-1.5 max-w-xs text-slate-300">
         <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
           <span className="font-bold text-slate-100 flex items-center space-x-1.5">
             <Satellite className="w-4 h-4 text-cyan-400" />
-            <span>Earth Observation Telemetry</span>
+            <span>Vijayawada Satellite Imagery</span>
           </span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">
-            10m GSD
+            Esri High-Res
           </span>
         </div>
 
         <div className="space-y-1 text-[11px] font-mono text-slate-400">
           <div className="flex justify-between">
-            <span>Sensor:</span>
-            <span className="text-slate-200">{mapMode === 'sar_radar' ? 'Sentinel-1 C-SAR' : 'Sentinel-2 MSI / High-Res Optical'}</span>
-          </div>
-          <div className="flex justify-between">
             <span>Location:</span>
-            <span className="text-cyan-300">Vijayawada (16.50°N, 80.64°E)</span>
+            <span className="text-cyan-300">Vijayawada, AP (16.51°N, 80.65°E)</span>
           </div>
           <div className="flex justify-between">
-            <span>Pass Date:</span>
-            <span className="text-slate-200">{mapMode === 'sar_radar' ? '02-SEP-2024' : '18-AUG-2024 (Cloud-Free)'}</span>
+            <span>River Reach:</span>
+            <span className="text-slate-200">Krishna (Prakasam Barrage)</span>
           </div>
           <div className="flex justify-between">
-            <span>Provider:</span>
-            <span className="text-slate-200">ESA Copernicus / NRSC / ESRI</span>
+            <span>Coordinate System:</span>
+            <span className="text-slate-200">WGS84 / EPSG:3857</span>
           </div>
         </div>
       </div>
 
       {/* Professional Remote Sensing Map Legend */}
-      <div className="absolute bottom-6 left-4 z-10 glass-panel p-3.5 rounded-2xl shadow-2xl text-xs space-y-2.5 w-72 border border-slate-800">
+      <div className="absolute bottom-6 left-4 z-[1000] glass-panel p-3.5 rounded-2xl shadow-2xl text-xs space-y-2 w-64 border border-slate-800">
         <div className="flex justify-between items-center text-xs font-semibold text-slate-200">
-          <span>Satellite Inundation Legend</span>
+          <span>Inundation Depth Overlay</span>
           <span className="font-mono text-cyan-400">0.0m - 3.5m+</span>
         </div>
 
-        {/* Dynamic Hydraulic Color Gradient */}
         <div className="h-3 rounded-md bg-gradient-to-r from-sky-300 via-blue-600 via-indigo-900 to-rose-600 shadow-inner"></div>
         <div className="flex justify-between text-[10px] text-slate-400 font-mono">
           <span>0.0m</span>
@@ -647,34 +462,24 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
           <span>3.0m+</span>
         </div>
 
-        {/* Features Legend */}
-        <div className="pt-2 border-t border-slate-800/80 grid grid-cols-2 gap-1.5 text-[11px] text-slate-300">
-          <span className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-purple-500"></span>
-            <span>Observed (SAR)</span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500"></span>
-            <span>Simulated Flood</span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span>
-            <span>NH-16 Passable</span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-rose-500"></span>
-            <span>Severed Highway</span>
-          </span>
+        <div className="pt-1.5 border-t border-slate-800/80 text-[10px] text-slate-400 flex items-center justify-between">
+          <span>Click anywhere to probe depth</span>
+          <span className="text-cyan-400">Prakasam Barrage</span>
         </div>
       </div>
 
-      {/* Point Hydrograph & SAR Probe Inspector */}
+      {/* Mandatory Satellite Imagery Provider Attribution */}
+      <div className="absolute bottom-1 right-24 z-[1000] text-[9px] text-slate-400/80 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800/60 pointer-events-none">
+        Imagery © Esri, Maxar, Earthstar Geographics, CNES/Airbus DS, USGS, Aerogrid | Map © OpenStreetMap
+      </div>
+
+      {/* Point Probe Inspection Modal */}
       {probe && (
-        <div className="absolute bottom-6 right-4 z-20 glass-panel p-4 rounded-2xl shadow-2xl border border-cyan-500/30 w-80 text-xs space-y-3 animate-in fade-in slide-in-from-bottom-2">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+        <div className="absolute bottom-6 right-4 z-[1000] glass-panel p-4 rounded-2xl shadow-2xl border border-cyan-500/30 w-72 text-xs space-y-2.5 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
             <span className="font-bold text-cyan-400 flex items-center space-x-1.5">
               <Activity className="w-4 h-4" />
-              <span>Location Radar & Hydrograph Probe</span>
+              <span>Location Hydrograph Probe</span>
             </span>
             <button
               onClick={() => setProbe(null)}
@@ -684,45 +489,30 @@ export const MapViewer2D: React.FC<MapViewer2DProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-slate-300">
-            <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <span className="text-[10px] text-slate-400 block">Ground Elevation</span>
-              <strong className="font-mono text-sm text-slate-100">{probe.elevation.toFixed(2)} m MSL</strong>
+          <div className="space-y-1 text-slate-300 font-mono text-[11px]">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Area:</span>
+              <strong className="text-slate-100 font-sans">{probe.locality}</strong>
             </div>
-            <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <span className="text-[10px] text-slate-400 block">Simulated Water Depth</span>
-              <strong className="font-mono text-sm text-cyan-400">{probe.currentDepth.toFixed(2)} m</strong>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Coordinates:</span>
+              <span>{probe.lat}°N, {probe.lng}°E</span>
             </div>
-            <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <span className="text-[10px] text-slate-400 block">Flow Velocity</span>
-              <strong className="font-mono text-sm text-emerald-400">{probe.velocity.toFixed(2)} m/s</strong>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Ground Elevation:</span>
+              <strong className="text-slate-100">{probe.elevation_m} m MSL</strong>
             </div>
-            <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <span className="text-[10px] text-slate-400 block">SAR Backscatter (σ⁰)</span>
-              <strong className="font-mono text-sm text-purple-300">{probe.sarBackscatterDb.toFixed(1)} dB</strong>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Current Depth:</span>
+              <strong className="text-cyan-400">{probe.depth_m} m</strong>
             </div>
-          </div>
-
-          <div className="space-y-1 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-              <span>Depth Over Time (0h - 6h)</span>
-              <span className="text-cyan-400">Peak: {probe.peakDepth.toFixed(2)}m</span>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Peak Inundation:</span>
+              <strong className="text-indigo-400">{probe.peak_depth_m} m</strong>
             </div>
-            <div className="h-12 flex items-end space-x-1 pt-1">
-              {probe.depthHistory.map((d, i) => {
-                const heightPct = Math.min(100, Math.max(10, (d / (probe.peakDepth || 1)) * 100));
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center group relative">
-                    <div
-                      style={{ height: `${heightPct}%` }}
-                      className={`w-full rounded-t-sm transition-all ${
-                        i === currentTimestep ? 'bg-cyan-400 shadow-sm shadow-cyan-400' : 'bg-cyan-700/60'
-                      }`}
-                    ></div>
-                    <span className="text-[8px] text-slate-500 font-mono mt-1">{i}h</span>
-                  </div>
-                );
-              })}
+            <div className="flex justify-between">
+              <span className="text-slate-400">Flow Velocity:</span>
+              <strong className="text-emerald-400">{probe.velocity_ms} m/s</strong>
             </div>
           </div>
         </div>
