@@ -17,7 +17,8 @@ import {
   SimulationParameters,
   ChatMessage,
   FullSimulationResponse,
-  RiverLocationHierarchy
+  RiverLocationHierarchy,
+  SatelliteMapMode
 } from './types';
 import { RotateCw, AlertCircle, Sparkles } from 'lucide-react';
 
@@ -33,6 +34,11 @@ export const App: React.FC = () => {
   const [latencyMs, setLatencyMs] = useState<number>(85);
   const [error, setError] = useState<string | null>(null);
 
+  // Satellite Remote Sensing Controls
+  const [mapMode, setMapMode] = useState<SatelliteMapMode>('satellite_flood');
+  const [floodOpacity, setFloodOpacity] = useState<number>(0.65);
+  const [beforeAfterMode, setBeforeAfterMode] = useState<boolean>(false);
+
   // Modals & Drawers
   const [isAssistantOpen, setIsAssistantOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
@@ -42,7 +48,7 @@ export const App: React.FC = () => {
   const [hierarchy, setHierarchy] = useState<RiverLocationHierarchy>({
     'Krishna River': {
       status: 'detailed',
-      badge: 'Detailed DEM & GIS',
+      badge: 'Detailed DEM & Satellite GIS',
       default_location: 'Vijayawada',
       locations: [
         { id: 'vijayawada', name: 'Vijayawada', status: 'detailed', state: 'Andhra Pradesh' },
@@ -112,7 +118,7 @@ export const App: React.FC = () => {
     {
       id: '1',
       sender: 'assistant',
-      text: '👋 Welcome to **HydroForge AI (Krishna River — Vijayawada Edition)**. I am your hydrodynamic co-pilot. You can adjust storm parameters, test 50 to 300 mm/hr rainfall, or ask me questions like *"Which hospitals lose access?"* or *"Set 150 mm/hr rainfall with 5 Lakh Cusecs discharge"*.',
+      text: '👋 Welcome to **HydroForge AI (Krishna River — Satellite & Radar Remote Sensing Edition)**. I am your hydrodynamic co-pilot. You can adjust storm parameters, explore **Sentinel-1 SAR radar backscatter**, or ask me questions like *"Which hospitals lose access?"* or *"Set 150 mm/hr rainfall with 5 Lakh Cusecs discharge"*.',
       timestamp: 'Just now'
     }
   ]);
@@ -171,17 +177,14 @@ export const App: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       try {
-        // Fetch locations hierarchy
         const locRes = await fetch(`${API_BASE}/api/locations`);
         if (locRes.ok) {
           const hier = await locRes.json();
           setHierarchy(hier);
         }
 
-        // Fetch Vijayawada GIS
         await loadLocationGIS('Krishna River', 'Vijayawada');
 
-        // Run default baseline simulation
         await handleRunSimulation({
           river: 'Krishna River',
           location: 'Vijayawada',
@@ -242,7 +245,6 @@ export const App: React.FC = () => {
       };
       setMessages(prev => [...prev, botMsg]);
 
-      // If parameters were updated, auto re-run simulation
       if (data.should_rerun_simulation && data.updated_params) {
         await handleParamsChange(data.updated_params);
       }
@@ -267,7 +269,7 @@ export const App: React.FC = () => {
         <div className="w-12 h-12 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-400">
           <AlertCircle className="w-7 h-7" />
         </div>
-        <h1 className="text-xl font-bold text-slate-100">HydroForge AI Simulation Engine</h1>
+        <h1 className="text-xl font-bold text-slate-100">HydroForge AI Satellite Monitoring Engine</h1>
         <p className="text-xs text-slate-400 max-w-md">{error}</p>
         <button
           onClick={() => window.location.reload()}
@@ -299,12 +301,18 @@ export const App: React.FC = () => {
 
       {/* Main Workspace Body */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Hydrology & Scenario Sidebar */}
+        {/* Left Hydrology & Satellite Sidebar */}
         <ScenarioSidebar
           params={params}
           onParamsChange={(newP) => setParams(prev => ({ ...prev, ...newP }))}
           onRunSimulation={() => handleRunSimulation()}
           isSimulating={isSimulating}
+          mapMode={mapMode}
+          onMapModeChange={setMapMode}
+          floodOpacity={floodOpacity}
+          onFloodOpacityChange={setFloodOpacity}
+          beforeAfterMode={beforeAfterMode}
+          onToggleBeforeAfter={() => setBeforeAfterMode(prev => !prev)}
           layerVisibility={layerVisibility}
           onToggleLayer={toggleLayer}
         />
@@ -335,6 +343,12 @@ export const App: React.FC = () => {
                     simulation={simulation}
                     currentTimestep={currentTimestep}
                     layerVisibility={layerVisibility}
+                    mapMode={mapMode}
+                    onMapModeChange={setMapMode}
+                    floodOpacity={floodOpacity}
+                    onFloodOpacityChange={setFloodOpacity}
+                    beforeAfterMode={beforeAfterMode}
+                    onToggleBeforeAfter={() => setBeforeAfterMode(prev => !prev)}
                     damagedBuildings={impact?.damaged_buildings_list}
                   />
                   <TimeSliderController
@@ -378,7 +392,7 @@ export const App: React.FC = () => {
           ) : (
             <div className="flex-1 flex items-center justify-center text-slate-500 text-xs">
               <RotateCw className="w-5 h-5 animate-spin text-cyan-400 mr-2" />
-              <span>Loading {params.location} Topography & GIS Mesh...</span>
+              <span>Loading {params.location} Satellite Basemap & GIS Mesh...</span>
             </div>
           )}
         </main>

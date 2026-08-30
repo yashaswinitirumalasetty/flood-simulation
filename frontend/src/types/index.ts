@@ -67,11 +67,45 @@ export interface WeatherData {
   hourly_forecast?: HourlyForecast[];
 }
 
+export interface OpticalSatelliteTelemetry {
+  mission: string;
+  sensor: string;
+  spatial_resolution_m: number;
+  bands: string[];
+  color_composite: string;
+  cloud_cover_pct: number;
+  acquisition_date: string;
+  source_provider: string;
+  tile_url_template?: string;
+  street_tile_url_template?: string;
+  carto_tile_url_template?: string;
+}
+
+export interface SARSatelliteTelemetry {
+  mission: string;
+  sensor: string;
+  spatial_resolution_m: number;
+  acquisition_mode: string;
+  polarization: string;
+  orbit_pass: string;
+  acquisition_date: string;
+  source_provider: string;
+  processing_level: string;
+  backscatter_grid_db: number[][];
+}
+
+export interface SatelliteTelemetry {
+  optical: OpticalSatelliteTelemetry;
+  sar_radar: SARSatelliteTelemetry;
+}
+
 export interface ObservedSatelliteData {
+  dataset_classification?: string;
   satellite_sensor: string;
   organization: string;
   observation_event: string;
   observation_date: string;
+  spatial_resolution_m?: number;
   prakasam_barrage_discharge_cusecs?: number;
   grid_mask: number[][];
   total_observed_flooded_area_km2: number;
@@ -95,6 +129,7 @@ export interface GISData {
   roughness_grid: number[][];
   min_elevation: number;
   max_elevation: number;
+  satellite_telemetry?: SatelliteTelemetry | null;
   assets: {
     buildings: Building[];
     critical_facilities: CriticalFacility[];
@@ -105,6 +140,8 @@ export interface GISData {
   weather?: WeatherData;
   observed_satellite?: ObservedSatelliteData | null;
 }
+
+export type SatelliteMapMode = 'satellite_flood' | 'satellite_optical' | 'sar_radar' | 'street_carto' | 'flood_only';
 
 export interface SimulationSnapshot {
   timestep_index: number;

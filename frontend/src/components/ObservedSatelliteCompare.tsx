@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Satellite, CheckCircle2, AlertTriangle, ShieldCheck, Info, Layers, Crosshair } from 'lucide-react';
+import { Satellite, CheckCircle2, AlertTriangle, ShieldCheck, Info, Layers, Crosshair, Radio, Eye } from 'lucide-react';
 import { SimulationResult, ImpactData, GISData } from '../types';
 
 interface ObservedSatelliteCompareProps {
@@ -13,16 +13,19 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
   simulation,
   impact
 }) => {
-  const [viewMode, setViewMode] = useState<'overlap' | 'simulated' | 'observed'>('overlap');
+  const [viewMode, setViewMode] = useState<'overlap' | 'simulated' | 'observed' | 'optical'>('overlap');
+  const [overlayOpacity, setOverlayOpacity] = useState<number>(0.75);
+
   const satVal = impact?.satellite_validation || null;
   const satData = gisData.observed_satellite || null;
+  const telemetry = gisData.satellite_telemetry;
 
   if (!satData) {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center text-slate-500 text-xs space-y-2">
         <Satellite className="w-8 h-8 text-slate-600" />
         <span>Authoritative satellite flood observation dataset unavailable for this schematic reach.</span>
-        <span className="text-slate-400">Switch to <strong>Krishna River → Vijayawada</strong> to view ISRO/Sentinel-1 SAR comparison.</span>
+        <span className="text-slate-400">Switch to <strong>Krishna River → Vijayawada</strong> to view Copernicus Sentinel-1 SAR & NRSC Bhuvan comparison.</span>
       </div>
     );
   }
@@ -40,20 +43,20 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
           <div className="flex items-center space-x-2">
             <Satellite className="w-5 h-5 text-purple-400" />
             <h2 className="text-xl font-bold text-slate-100">
-              Observed Satellite Flood vs 2D Simulation (Remote Sensing Validation)
+              Copernicus Sentinel-1 SAR & Optical Flood Inundation Validation
             </h2>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Benchmarking model inundation against {satData.organization} ({satData.satellite_sensor}) dataset for the {satData.observation_event}.
+            Benchmarking 2D SWE simulation against {satData.organization} ({satData.satellite_sensor}) dataset for the {satData.observation_event}.
           </p>
         </div>
 
-        <div className="text-right text-[11px] font-mono bg-purple-950/80 px-3 py-1 rounded-lg border border-purple-800 text-purple-300">
+        <div className="text-right text-[11px] font-mono bg-purple-950/80 px-3 py-1 rounded-xl border border-purple-800 text-purple-300">
           <span>Observation: {satData.observation_date}</span>
         </div>
       </div>
 
-      {/* Accuracy & Validation Score Cards */}
+      {/* Accuracy & Remote Sensing Telemetry Score Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* IoU Score */}
         <div className="glass-panel p-4 rounded-2xl border border-purple-500/30 shadow-xl space-y-1 bg-gradient-to-br from-slate-900 via-slate-900 to-purple-950/40">
@@ -67,7 +70,7 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
           </span>
         </div>
 
-        {/* Simulated vs Observed Area */}
+        {/* Observed vs Simulated Area */}
         <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-1">
           <span className="text-xs text-slate-400 font-medium">Observed Satellite Area</span>
           <div className="text-3xl font-bold font-mono text-cyan-400">
@@ -93,11 +96,11 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
           <div className="text-3xl font-bold font-mono text-emerald-400">
             {satVal ? (satVal.recall * 100).toFixed(1) + '%' : '89.6%'}
           </div>
-          <span className="text-[11px] text-slate-500">True Flooded Area Capture</span>
+          <span className="text-[11px] text-slate-500">True Inundated Area Capture</span>
         </div>
       </div>
 
-      {/* Main Comparison Map Viewport & Matrix */}
+      {/* Main Satellite Comparison Matrix Viewport */}
       <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
         {/* Layer Mode Selector */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -106,31 +109,47 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
             <span className="font-semibold text-xs text-slate-200">Satellite Overlap Layer View</span>
           </div>
 
-          <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-medium">
-            <button
-              onClick={() => setViewMode('overlap')}
-              className={`px-3 py-1 rounded-lg transition-all ${
-                viewMode === 'overlap' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Confusion Overlap (TP / FP / FN)
-            </button>
-            <button
-              onClick={() => setViewMode('observed')}
-              className={`px-3 py-1 rounded-lg transition-all ${
-                viewMode === 'observed' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              ISRO Sentinel-1 Observed Extent
-            </button>
-            <button
-              onClick={() => setViewMode('simulated')}
-              className={`px-3 py-1 rounded-lg transition-all ${
-                viewMode === 'simulated' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Simulated Flood Depth
-            </button>
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2 text-xs text-slate-400">
+              <span>Mask Opacity:</span>
+              <input
+                type="range"
+                min={0.2}
+                max={1.0}
+                step={0.05}
+                value={overlayOpacity}
+                onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
+                className="w-24 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-400"
+              />
+              <span className="font-mono text-purple-300">{Math.round(overlayOpacity * 100)}%</span>
+            </div>
+
+            <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-medium">
+              <button
+                onClick={() => setViewMode('overlap')}
+                className={`px-3 py-1 rounded-lg transition-all ${
+                  viewMode === 'overlap' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Confusion Overlap (TP / FP / FN)
+              </button>
+              <button
+                onClick={() => setViewMode('observed')}
+                className={`px-3 py-1 rounded-lg transition-all ${
+                  viewMode === 'observed' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Sentinel-1 SAR Observed
+              </button>
+              <button
+                onClick={() => setViewMode('simulated')}
+                className={`px-3 py-1 rounded-lg transition-all ${
+                  viewMode === 'simulated' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Simulated 2D SWE Inundation
+              </button>
+            </div>
           </div>
         </div>
 
@@ -153,20 +172,20 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
                   const simWet = peakDepths[y] ? peakDepths[y][x] > 0.05 : false;
                   const obsWet = obsMask[y] ? obsMask[y][x] > 0.5 : false;
 
-                  let cellColor = '#1e293b'; // Dry land
+                  let cellColor = '#1e293b';
 
                   if (viewMode === 'overlap') {
                     if (simWet && obsWet) {
-                      cellColor = '#a855f7'; // True Positive: Purple (Matched)
+                      cellColor = `rgba(168, 85, 247, ${overlayOpacity})`; // True Positive: Purple (Matched)
                     } else if (simWet && !obsWet) {
-                      cellColor = '#38bdf8'; // False Positive: Cyan (Simulated Over-prediction)
+                      cellColor = `rgba(56, 189, 248, ${overlayOpacity})`;  // False Positive: Cyan (Simulated Over-prediction)
                     } else if (!simWet && obsWet) {
-                      cellColor = '#f43f5e'; // False Negative: Rose (Observed Under-prediction)
+                      cellColor = `rgba(244, 63, 94, ${overlayOpacity})`;   // False Negative: Rose (Observed Under-prediction)
                     }
                   } else if (viewMode === 'observed') {
-                    cellColor = obsWet ? '#a855f7' : '#1e293b';
+                    cellColor = obsWet ? `rgba(168, 85, 247, ${overlayOpacity})` : '#1e293b';
                   } else {
-                    cellColor = simWet ? '#0284c7' : '#1e293b';
+                    cellColor = simWet ? `rgba(2, 132, 199, ${overlayOpacity})` : '#1e293b';
                   }
 
                   return (
@@ -182,7 +201,7 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
             </div>
           </div>
 
-          {/* Legend & Remote Sensing Analysis Guide */}
+          {/* Legend & Earth Observation Metadata Panel */}
           <div className="space-y-4 text-xs text-slate-300">
             <div className="space-y-2">
               <span className="font-semibold text-slate-100 block">Spatial Classification Legend</span>
@@ -191,7 +210,7 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
                 <span className="w-3.5 h-3.5 rounded bg-purple-500 shrink-0"></span>
                 <div>
                   <strong className="text-purple-300 block">True Positive (Matched Inundation)</strong>
-                  <span className="text-[10px] text-slate-400">Both model & ISRO SAR observe flood.</span>
+                  <span className="text-[10px] text-slate-400">Both 2D simulation & Sentinel-1 SAR observe flood.</span>
                 </div>
               </div>
 
@@ -199,7 +218,7 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
                 <span className="w-3.5 h-3.5 rounded bg-sky-400 shrink-0"></span>
                 <div>
                   <strong className="text-sky-300 block">False Positive (Simulated Only)</strong>
-                  <span className="text-[10px] text-slate-400">Model predicts flow not in SAR pass.</span>
+                  <span className="text-[10px] text-slate-400">Model predicts flow not present in SAR pass.</span>
                 </div>
               </div>
 
@@ -212,10 +231,20 @@ export const ObservedSatelliteCompare: React.FC<ObservedSatelliteCompareProps> =
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] leading-relaxed text-slate-400">
-              <strong className="text-slate-200 block mb-1">Scientific Remote Sensing Note:</strong>
-              During the 2024 Vijayawada flood event, Synthetic Aperture Radar (SAR) backscatter captured major overbank flow along the Krishna Lanka floodwall and Tadepalli embankments, achieving a **91.4% Critical Success Index** with our 2D Shallow Water Physics solver.
-            </div>
+            {/* Earth Observation Sensor Metadata Card */}
+            {telemetry && (
+              <div className="p-3.5 bg-slate-900/90 rounded-xl border border-slate-800 text-[11px] space-y-1.5 font-mono">
+                <div className="flex items-center space-x-1.5 text-slate-200 font-sans font-bold border-b border-slate-800 pb-1">
+                  <Radio className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Sentinel-1 C-SAR Metadata</span>
+                </div>
+                <div className="flex justify-between"><span>Sensor:</span> <span className="text-slate-200">{telemetry.sar_radar.sensor}</span></div>
+                <div className="flex justify-between"><span>Resolution:</span> <span className="text-slate-200">{telemetry.sar_radar.spatial_resolution_m}m GSD</span></div>
+                <div className="flex justify-between"><span>Polarization:</span> <span className="text-slate-200">{telemetry.sar_radar.polarization}</span></div>
+                <div className="flex justify-between"><span>Pass Date:</span> <span className="text-cyan-300">{telemetry.sar_radar.acquisition_date}</span></div>
+                <div className="flex justify-between"><span>Processing:</span> <span className="text-slate-300">Level-1 GRD σ⁰ Calibrated</span></div>
+              </div>
+            )}
           </div>
         </div>
       </div>

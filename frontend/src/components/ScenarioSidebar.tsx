@@ -1,12 +1,33 @@
 import React from 'react';
-import { CloudRain, Wind, Play, RotateCcw, Sliders, Layers, Droplets, AlertTriangle, ShieldCheck, Waves } from 'lucide-react';
-import { SimulationParameters } from '../types';
+import {
+  CloudRain,
+  Wind,
+  Play,
+  RotateCcw,
+  Sliders,
+  Layers,
+  Droplets,
+  AlertTriangle,
+  ShieldCheck,
+  Waves,
+  Satellite,
+  Radio,
+  Split,
+  Eye
+} from 'lucide-react';
+import { SimulationParameters, SatelliteMapMode } from '../types';
 
 interface ScenarioSidebarProps {
   params: SimulationParameters;
   onParamsChange: (newParams: Partial<SimulationParameters>) => void;
   onRunSimulation: () => void;
   isSimulating: boolean;
+  mapMode?: SatelliteMapMode;
+  onMapModeChange?: (mode: SatelliteMapMode) => void;
+  floodOpacity?: number;
+  onFloodOpacityChange?: (opacity: number) => void;
+  beforeAfterMode?: boolean;
+  onToggleBeforeAfter?: () => void;
   layerVisibility: {
     dem: boolean;
     floodDepth: boolean;
@@ -24,6 +45,12 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
   onParamsChange,
   onRunSimulation,
   isSimulating,
+  mapMode = 'satellite_flood',
+  onMapModeChange,
+  floodOpacity = 0.65,
+  onFloodOpacityChange,
+  beforeAfterMode = false,
+  onToggleBeforeAfter,
   layerVisibility,
   onToggleLayer
 }) => {
@@ -56,7 +83,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Sliders className="w-4 h-4 text-cyan-400" />
-            <h2 className="font-semibold text-xs text-slate-100 uppercase tracking-wider">Hydrology & Scenario</h2>
+            <h2 className="font-semibold text-xs text-slate-100 uppercase tracking-wider">Hydrology & Satellite</h2>
           </div>
           <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800">
             {params.river}
@@ -65,8 +92,84 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
       </div>
 
       <div className="p-3.5 space-y-4 flex-1">
+        {/* Remote Sensing Layer Mode Selector */}
+        <div className="space-y-2 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 shadow-sm">
+          <div className="flex items-center justify-between text-xs">
+            <span className="flex items-center space-x-1.5 text-slate-200 font-medium">
+              <Satellite className="w-3.5 h-3.5 text-purple-400" />
+              <span>Satellite Basemap Mode</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5 pt-1 text-xs">
+            <button
+              onClick={() => onMapModeChange?.('satellite_flood')}
+              className={`p-1.5 rounded-xl border text-center transition-all flex items-center justify-center space-x-1 ${
+                mapMode === 'satellite_flood'
+                  ? 'bg-cyan-600/30 text-cyan-200 border-cyan-500 font-bold'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Satellite className="w-3 h-3" />
+              <span className="text-[11px]">Sat + Flood</span>
+            </button>
+
+            <button
+              onClick={() => onMapModeChange?.('satellite_optical')}
+              className={`p-1.5 rounded-xl border text-center transition-all flex items-center justify-center space-x-1 ${
+                mapMode === 'satellite_optical'
+                  ? 'bg-cyan-600/30 text-cyan-200 border-cyan-500 font-bold'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Eye className="w-3 h-3" />
+              <span className="text-[11px]">Optical Base</span>
+            </button>
+
+            <button
+              onClick={() => onMapModeChange?.('sar_radar')}
+              className={`p-1.5 rounded-xl border text-center transition-all flex items-center justify-center space-x-1 ${
+                mapMode === 'sar_radar'
+                  ? 'bg-purple-600/30 text-purple-200 border-purple-500 font-bold'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Radio className="w-3 h-3" />
+              <span className="text-[11px]">Sentinel-1 SAR</span>
+            </button>
+
+            <button
+              onClick={() => onMapModeChange?.('street_carto')}
+              className={`p-1.5 rounded-xl border text-center transition-all flex items-center justify-center space-x-1 ${
+                mapMode === 'street_carto'
+                  ? 'bg-slate-700 text-slate-100 border-slate-500 font-bold'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span className="text-[11px]">Street Carto</span>
+            </button>
+          </div>
+
+          {/* Flood Opacity Control Slider */}
+          <div className="pt-2 border-t border-slate-800/80 space-y-1">
+            <div className="flex justify-between text-[11px] text-slate-400">
+              <span>Flood Transparency:</span>
+              <span className="font-mono text-cyan-300 font-bold">{Math.round(floodOpacity * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0.1}
+              max={1.0}
+              step={0.05}
+              value={floodOpacity}
+              onChange={(e) => onFloodOpacityChange?.(parseFloat(e.target.value))}
+              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+            />
+          </div>
+        </div>
+
         {/* River Discharge Control (Prakasam Barrage Inflow) */}
-        <div className="space-y-2 bg-slate-900/80 p-3 rounded-xl border border-slate-800 shadow-sm">
+        <div className="space-y-2 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 shadow-sm">
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center space-x-1.5 text-slate-200 font-medium">
               <Waves className="w-3.5 h-3.5 text-cyan-400" />
@@ -98,7 +201,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
               <button
                 key={dp.label}
                 onClick={() => onParamsChange({ river_discharge_cusecs: dp.cusecs })}
-                className={`py-1 px-1.5 rounded text-[10px] font-mono border text-center transition-all ${
+                className={`py-1 px-1.5 rounded-lg text-[10px] font-mono border text-center transition-all ${
                   Math.abs(params.river_discharge_cusecs - dp.cusecs) < 1000
                     ? 'bg-cyan-600/25 text-cyan-200 border-cyan-500 font-bold'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -111,7 +214,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
         </div>
 
         {/* Rainfall Intensity Slider (20 to 300 mm/hr) */}
-        <div className="space-y-2 bg-slate-900/80 p-3 rounded-xl border border-slate-800 shadow-sm">
+        <div className="space-y-2 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 shadow-sm">
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center space-x-1.5 text-slate-200 font-medium">
               <CloudRain className="w-3.5 h-3.5 text-sky-400" />
@@ -132,7 +235,6 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
             className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
           />
 
-          {/* Preset Buttons */}
           <div className="flex justify-between text-[10px] text-slate-400 font-mono">
             <span>20 mm/hr</span>
             <span>150 mm/hr</span>
@@ -144,7 +246,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
               <button
                 key={rVal}
                 onClick={() => onParamsChange({ rainfall_intensity_mmhr: rVal })}
-                className={`py-1 px-1 rounded text-[10px] font-mono border text-center transition-all ${
+                className={`py-1 px-1 rounded-lg text-[10px] font-mono border text-center transition-all ${
                   params.rainfall_intensity_mmhr === rVal
                     ? 'bg-sky-600/30 text-sky-200 border-sky-500 font-bold'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -157,11 +259,11 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
         </div>
 
         {/* Storm Duration Selector */}
-        <div className="space-y-2 bg-slate-900/80 p-3 rounded-xl border border-slate-800 shadow-sm">
+        <div className="space-y-2 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 shadow-sm">
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center space-x-1.5 text-slate-200 font-medium">
               <Wind className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Precipitation Duration</span>
+              <span>Storm Duration</span>
             </span>
             <span className="font-mono text-indigo-300 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[11px]">
               {params.duration_hours} hrs
@@ -173,7 +275,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
               <button
                 key={dur}
                 onClick={() => onParamsChange({ duration_hours: dur })}
-                className={`py-1.5 rounded text-xs font-mono border text-center transition-all ${
+                className={`py-1.5 rounded-lg text-xs font-mono border text-center transition-all ${
                   params.duration_hours === dur
                     ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500 font-bold'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -189,7 +291,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
         <div className="space-y-2 pt-1 border-t border-slate-800">
           <label className="text-[11px] font-semibold text-slate-400 flex items-center space-x-1.5 uppercase tracking-wide">
             <Layers className="w-3.5 h-3.5 text-slate-400" />
-            <span>GIS & Remote Sensing Layers</span>
+            <span>GIS & Feature Layers</span>
           </label>
           <div className="grid grid-cols-2 gap-1.5 text-xs">
             <label className="flex items-center space-x-1.5 bg-slate-900/80 p-1.5 rounded-lg border border-slate-800/80 cursor-pointer hover:border-slate-700">
@@ -199,7 +301,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
                 onChange={() => onToggleLayer('floodDepth')}
                 className="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0 cursor-pointer"
               />
-              <span className="text-[11px]">Flood Depth</span>
+              <span className="text-[11px]">Flood Inundation</span>
             </label>
 
             <label className="flex items-center space-x-1.5 bg-slate-900/80 p-1.5 rounded-lg border border-slate-800/80 cursor-pointer hover:border-slate-700">
@@ -264,7 +366,7 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
           ) : (
             <>
               <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Run {params.location} Inundation Simulation</span>
+              <span>Run {params.location} Simulation</span>
             </>
           )}
         </button>
