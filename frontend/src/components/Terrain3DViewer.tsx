@@ -11,7 +11,6 @@ import {
   Eye,
   Sliders,
   Activity,
-  Maximize2,
   Crosshair,
   Waves
 } from 'lucide-react';
@@ -43,24 +42,23 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
   const terrainMeshRef = useRef<THREE.Mesh | null>(null);
   const waterMeshRef = useRef<THREE.Mesh | null>(null);
   const particlesRef = useRef<THREE.Points | null>(null);
-  const landmarksGroupRef = useRef<THREE.Group | null>(null);
   const isDraggingRef = useRef<boolean>(false);
   const previousMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [mode3D, setMode3D] = useState<'sat_flood' | 'sat_only' | 'flood_only' | 'dem_tint'>('sat_flood');
   const [activePreset, setActivePreset] = useState<'overview' | 'top' | 'barrage' | 'temple' | 'floodplain'>('overview');
+  const [verticalExag, setVerticalExag] = useState<number>(1.0); // 1.0x realistic relief
   const [probe, setProbe] = useState<Probe3D | null>(null);
-  const [floodOpacity, setFloodOpacity] = useState<number>(0.65);
-  const [isTextureLoaded, setIsTextureLoaded] = useState<boolean>(false);
+  const [floodOpacity, setFloodOpacity] = useState<number>(0.55);
 
   const grid_size = gisData.grid_size;
   const currentSnapshot = simulation?.snapshots[currentTimestep] || null;
 
-  // 1. Build Multi-Tile High-Resolution Georeferenced Satellite Texture Canvas
+  // 1. Build Multi-Tile High-Resolution Georeferenced Satellite Orthomosaic Texture
   const loadSatelliteTexture = useCallback((): Promise<THREE.CanvasTexture> => {
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
-      const canvasSize = 1024;
+      const canvasSize = 2048; // Ultra-crisp 2K texture
       canvas.width = canvasSize;
       canvas.height = canvasSize;
       const ctx = canvas.getContext('2d');
@@ -69,8 +67,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
         return;
       }
 
-      // Esri World Imagery tiles at zoom level 14 for Vijayawada extent
-      // x: 11858 to 11863, y: 7352 to 7355
+      // Esri World Imagery Web Mercator tile grid at zoom 14 covering Vijayawada
       const zoom = 14;
       const xTiles = [11858, 11859, 11860, 11861, 11862];
       const yTiles = [7352, 7353, 7354, 7355];
@@ -80,8 +77,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       const tileWidth = canvasSize / xTiles.length;
       const tileHeight = canvasSize / yTiles.length;
 
-      // Draw baseline background in case tile fetches are delayed
-      ctx.fillStyle = '#0f231e';
+      // Realistic Earth-tone base while tiles load
+      ctx.fillStyle = '#172722';
       ctx.fillRect(0, 0, canvasSize, canvasSize);
 
       let hasResolved = false;
@@ -91,7 +88,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
           const tex = new THREE.CanvasTexture(canvas);
           tex.generateMipmaps = true;
           tex.minFilter = THREE.LinearMipmapLinearFilter;
-          setIsTextureLoaded(true);
+          tex.magFilter = THREE.LinearFilter;
+          tex.anisotropy = 16;
           resolve(tex);
         }
       }, 4000);
@@ -111,7 +109,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
               const tex = new THREE.CanvasTexture(canvas);
               tex.generateMipmaps = true;
               tex.minFilter = THREE.LinearMipmapLinearFilter;
-              setIsTextureLoaded(true);
+              tex.magFilter = THREE.LinearFilter;
+              tex.anisotropy = 16;
               resolve(tex);
             }
           };
@@ -122,7 +121,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
               hasResolved = true;
               clearTimeout(timeout);
               const tex = new THREE.CanvasTexture(canvas);
-              setIsTextureLoaded(true);
+              tex.generateMipmaps = true;
               resolve(tex);
             }
           };
@@ -138,66 +137,64 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     const width = mountRef.current.clientWidth;
     const height = mountRef.current.clientHeight;
 
-    // Scene & Fog
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#070d18');
-    scene.fog = new THREE.FogExp2('#070d18', 0.005);
+    scene.fog = new THREE.FogExp2('#070d18', 0.0035);
     sceneRef.current = scene;
 
-    // Perspective Camera
-    const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1500);
-    camera.position.set(65, 75, 85);
-    camera.lookAt(0, 5, 0);
+    // High Aerial Oblique Camera (Google Earth / Professional GIS View)
+    const camera = new THREE.PerspectiveCamera(42, width / height, 1, 2500);
+    camera.position.set(75, 95, 105); // High altitude oblique vantage
+    camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    // WebGL Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.1;
     rendererRef.current = renderer;
 
     mountRef.current.appendChild(renderer.domElement);
 
-    // Natural Sunlight & Atmospheric Fill Lighting
-    const ambientLight = new THREE.AmbientLight('#ffffff', 1.0);
+    // Natural Sunlight & Sky Light
+    const ambientLight = new THREE.AmbientLight('#ffffff', 1.05);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight('#fffbeb', 1.8);
-    sunLight.position.set(50, 110, 60);
+    const sunLight = new THREE.DirectionalLight('#fffbeb', 1.6);
+    sunLight.position.set(70, 140, 80);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
-    sunLight.shadow.bias = -0.0001;
     scene.add(sunLight);
 
-    const skyFill = new THREE.DirectionalLight('#38bdf8', 0.6);
-    skyFill.position.set(-60, 40, -60);
+    const skyFill = new THREE.DirectionalLight('#38bdf8', 0.45);
+    skyFill.position.set(-80, 50, -80);
     scene.add(skyFill);
 
-    // 3. Real DEM Elevation Plane Geometry for Vijayawada
-    const planeGeo = new THREE.PlaneGeometry(90, 90, grid_size - 1, grid_size - 1);
+    // 3. Terrain Heightfield Plane for Vijayawada
+    const planeGeo = new THREE.PlaneGeometry(100, 100, grid_size - 1, grid_size - 1);
     planeGeo.rotateX(-Math.PI / 2);
 
     const pos = planeGeo.attributes.position;
     const dem = gisData.dem_grid;
     const minElev = gisData.min_elevation;
-    const maxElev = gisData.max_elevation;
 
+    // Natural elevation relief scaled with verticalExag
     for (let i = 0; i < pos.count; i++) {
       const x = i % grid_size;
       const y = Math.floor(i / grid_size);
       const elev = dem[y][x];
-      // Accurate elevation scaling
-      pos.setY(i, (elev - minElev) * 0.72);
+      // Gentle natural relief (0.24 factor at 1.0x exaggeration)
+      pos.setY(i, (elev - minElev) * 0.24 * verticalExag);
     }
     planeGeo.computeVertexNormals();
 
     // DEM Hypsometric Tint Vertex Colors
     const colors = new Float32Array(pos.count * 3);
+    const maxElev = gisData.max_elevation;
     for (let i = 0; i < pos.count; i++) {
       const x = i % grid_size;
       const y = Math.floor(i / grid_size);
@@ -206,17 +203,17 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
 
       if (elev < 15.0) {
         colors[i * 3] = 0.08; colors[i * 3 + 1] = 0.16; colors[i * 3 + 2] = 0.24;
-      } else if (elev < 26.0) {
-        colors[i * 3] = 0.15 + norm * 0.1; colors[i * 3 + 1] = 0.22 + norm * 0.12; colors[i * 3 + 2] = 0.18 + norm * 0.08;
+      } else if (elev < 24.0) {
+        colors[i * 3] = 0.16 + norm * 0.08; colors[i * 3 + 1] = 0.22 + norm * 0.10; colors[i * 3 + 2] = 0.18 + norm * 0.06;
       } else {
-        colors[i * 3] = 0.35 + norm * 0.25; colors[i * 3 + 1] = 0.26 + norm * 0.16; colors[i * 3 + 2] = 0.18 + norm * 0.1;
+        colors[i * 3] = 0.35 + norm * 0.2; colors[i * 3 + 1] = 0.28 + norm * 0.12; colors[i * 3 + 2] = 0.18 + norm * 0.08;
       }
     }
     planeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     // Standard Terrain Material
     const terrainMat = new THREE.MeshStandardMaterial({
-      roughness: 0.85,
+      roughness: 0.88,
       metalness: 0.05,
       flatShading: false,
     });
@@ -234,94 +231,53 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     });
 
     // 4. Volumetric Semi-Transparent Flood Water Surface
-    const waterGeo = new THREE.PlaneGeometry(90, 90, grid_size - 1, grid_size - 1);
+    const waterGeo = new THREE.PlaneGeometry(100, 100, grid_size - 1, grid_size - 1);
     waterGeo.rotateX(-Math.PI / 2);
 
     const waterMat = new THREE.MeshPhysicalMaterial({
       color: '#0284c7',
       transparent: true,
-      opacity: 0.72,
-      roughness: 0.04,
-      metalness: 0.18,
-      transmission: 0.75,
+      opacity: floodOpacity,
+      roughness: 0.05,
+      metalness: 0.15,
+      transmission: 0.72,
       ior: 1.333,
-      reflectivity: 0.9,
+      reflectivity: 0.85,
       clearcoat: 1.0,
-      clearcoatRoughness: 0.05,
+      clearcoatRoughness: 0.06,
     });
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMeshRef.current = waterMesh;
     scene.add(waterMesh);
 
-    // 5. Water Flow Velocity Particles (Streamlines following Krishna River channel)
-    const particleCount = 350;
+    // 5. Scientific Flow Velocity Streamlines (Subtle flow along Krishna River)
+    const particleCount = 280;
     const particleGeo = new THREE.BufferGeometry();
     const particlePositions = new Float32Array(particleCount * 3);
     const particleSpeeds = new Float32Array(particleCount);
 
     for (let i = 0; i < particleCount; i++) {
       const t = Math.random();
-      const px = (t - 0.5) * 85;
-      const pz = (0.45 * (px / 45) * 45 + Math.sin(px * 0.08) * 10) + (Math.random() - 0.5) * 10;
+      const px = (t - 0.5) * 90;
+      const pz = (0.45 * (px / 45) * 45 + Math.sin(px * 0.08) * 10) + (Math.random() - 0.5) * 8;
       
       particlePositions[i * 3] = px;
-      particlePositions[i * 3 + 1] = 2.0;
+      particlePositions[i * 3 + 1] = 1.0;
       particlePositions[i * 3 + 2] = pz;
-      particleSpeeds[i] = 0.28 + Math.random() * 0.42;
+      particleSpeeds[i] = 0.22 + Math.random() * 0.35;
     }
 
     particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
     const particleMat = new THREE.PointsMaterial({
       color: '#38bdf8',
-      size: 1.4,
+      size: 1.2,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.75,
       blending: THREE.AdditiveBlending
     });
     const particles = new THREE.Points(particleGeo, particleMat);
     particlesRef.current = particles;
     scene.add(particles);
-
-    // 6. Professional Landmark GPS Pins in 3D
-    const lmGroup = new THREE.Group();
-    landmarksGroupRef.current = lmGroup;
-
-    const landmarks3D = [
-      { name: 'Prakasam Barrage', gx: intRatio(0.48), gy: intRatio(0.48), type: 'barrage' },
-      { name: 'Indrakeeladri Hill (Kanaka Durga)', gx: intRatio(0.35), gy: intRatio(0.42), type: 'temple' },
-      { name: 'GGH Vijayawada Hospital', gx: intRatio(0.62), gy: intRatio(0.36), type: 'hospital' },
-      { name: 'Pandit Nehru Bus Station (PNBS)', gx: intRatio(0.54), gy: intRatio(0.44), type: 'transit' },
-      { name: 'Tadepalli South Bank', gx: intRatio(0.46), gy: intRatio(0.68), type: 'substation' },
-    ];
-
-    function intRatio(r: number) {
-      return Math.floor(r * (grid_size - 1));
-    }
-
-    landmarks3D.forEach((lm) => {
-      const lx = ((lm.gx / (grid_size - 1)) - 0.5) * 90;
-      const lz = ((lm.gy / (grid_size - 1)) - 0.5) * 90;
-      const lElev = (dem[lm.gy][lm.gx] - minElev) * 0.72;
-
-      // Pin post
-      const pinGeo = new THREE.CylinderGeometry(0.35, 0.35, 4.0, 8);
-      const pinMat = new THREE.MeshStandardMaterial({
-        color: lm.type === 'hospital' ? '#ef4444' : lm.type === 'barrage' ? '#0284c7' : '#f59e0b',
-        roughness: 0.3
-      });
-      const pinMesh = new THREE.Mesh(pinGeo, pinMat);
-      pinMesh.position.set(lx, lElev + 2.0, lz);
-
-      // Pin head sphere
-      const headGeo = new THREE.SphereGeometry(0.9, 12, 12);
-      const headMesh = new THREE.Mesh(headGeo, pinMat);
-      headMesh.position.set(lx, lElev + 4.2, lz);
-
-      lmGroup.add(pinMesh);
-      lmGroup.add(headMesh);
-    });
-
-    scene.add(lmGroup);
 
     // Mouse Interaction (Orbit / Pan / Tilt)
     const handleMouseDown = (e: MouseEvent) => {
@@ -336,8 +292,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       const deltaX = e.clientX - previousMousePosRef.current.x;
       const deltaY = e.clientY - previousMousePosRef.current.y;
 
-      const angleX = deltaX * 0.005;
-      const angleY = deltaY * 0.005;
+      const angleX = deltaX * 0.004;
+      const angleY = deltaY * 0.004;
 
       const cam = cameraRef.current;
       const radius = Math.sqrt(cam.position.x ** 2 + cam.position.z ** 2);
@@ -345,8 +301,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
 
       cam.position.x = radius * Math.cos(currentAngle - angleX);
       cam.position.z = radius * Math.sin(currentAngle - angleX);
-      cam.position.y = Math.max(10, Math.min(140, cam.position.y + angleY * 20));
-      cam.lookAt(0, 5, 0);
+      cam.position.y = Math.max(15, Math.min(180, cam.position.y + angleY * 25));
+      cam.lookAt(0, 0, 0);
 
       previousMousePosRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -355,7 +311,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       isDraggingRef.current = false;
     };
 
-    // Click Raycaster for 3D Coordinate & Inundation Inspection
+    // Click Raycaster for 3D Inundation & Terrain Inspection
     const handleClick = (e: MouseEvent) => {
       if (!mountRef.current || !cameraRef.current || !terrainMeshRef.current) return;
       const rect = mountRef.current.getBoundingClientRect();
@@ -370,9 +326,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
 
       if (intersects.length > 0) {
         const point = intersects[0].point;
-        // Convert world X, Z to grid index
-        const gx = Math.min(grid_size - 1, Math.max(0, Math.floor(((point.x / 90) + 0.5) * (grid_size - 1))));
-        const gy = Math.min(grid_size - 1, Math.max(0, Math.floor(((point.z / 90) + 0.5) * (grid_size - 1))));
+        const gx = Math.min(grid_size - 1, Math.max(0, Math.floor(((point.x / 100) + 0.5) * (grid_size - 1))));
+        const gy = Math.min(grid_size - 1, Math.max(0, Math.floor(((point.z / 100) + 0.5) * (grid_size - 1))));
 
         const elev = dem[gy][gx];
         const currentSnap = simulation?.snapshots[currentTimestep];
@@ -409,7 +364,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      waveTime += 0.035;
+      waveTime += 0.03;
 
       // 1. Dynamic Geographically-Constrained Volumetric Water Height
       if (waterMeshRef.current) {
@@ -420,32 +375,32 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
         for (let i = 0; i < wPos.count; i++) {
           const gx = i % grid_size;
           const gy = Math.floor(i / grid_size);
-          const elev = (dem[gy][gx] - minElev) * 0.72;
+          const elev = (dem[gy][gx] - minElev) * 0.24 * verticalExag;
           const d = (depths && showWater) ? depths[gy][gx] : 0;
 
-          if (d > 0.03) {
-            // Natural undulating river ripples
-            const ripple = Math.sin(gx * 0.45 + waveTime) * Math.cos(gy * 0.45 + waveTime) * 0.15;
-            wPos.setY(i, elev + d * 0.72 + ripple);
+          if (d > 0.02) {
+            // Smooth natural surface ripple
+            const ripple = Math.sin(gx * 0.4 + waveTime) * Math.cos(gy * 0.4 + waveTime) * 0.08;
+            wPos.setY(i, elev + d * 0.24 * verticalExag + ripple);
           } else {
-            wPos.setY(i, elev - 5.0); // Completely hidden beneath dry terrain
+            wPos.setY(i, elev - 8.0); // Completely hidden beneath dry terrain
           }
         }
         wPos.needsUpdate = true;
       }
 
-      // 2. Animate Water Flow Particles along River Channel
+      // 2. Animate Water Flow Velocity Particles along Krishna River
       if (particlesRef.current) {
         const pPos = particlesRef.current.geometry.attributes.position;
         const pArray = pPos.array as Float32Array;
 
         for (let i = 0; i < particleCount; i++) {
-          pArray[i * 3] += particleSpeeds[i] * 0.65;
+          pArray[i * 3] += particleSpeeds[i] * 0.55;
           const currentPx = pArray[i * 3];
           pArray[i * 3 + 2] = (0.45 * (currentPx / 45) * 45 + Math.sin(currentPx * 0.07) * 9);
 
-          if (pArray[i * 3] > 44) {
-            pArray[i * 3] = -44;
+          if (pArray[i * 3] > 48) {
+            pArray[i * 3] = -48;
           }
         }
         pPos.needsUpdate = true;
@@ -477,7 +432,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       }
       renderer.dispose();
     };
-  }, [gisData, mode3D]);
+  }, [gisData, mode3D, verticalExag]);
 
   // 3. Handle 3D Layer Mode Switching (Satellite / DEM Tint / Flood Only)
   useEffect(() => {
@@ -514,25 +469,25 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     setActivePreset(preset);
 
     if (preset === 'overview') {
-      // Isometric regional perspective
-      cameraRef.current.position.set(65, 75, 85);
-      cameraRef.current.lookAt(0, 5, 0);
+      // High aerial oblique 45 degree perspective
+      cameraRef.current.position.set(75, 95, 105);
+      cameraRef.current.lookAt(0, 0, 0);
     } else if (preset === 'top') {
-      // Orthographic-like 90 degree top-down view
-      cameraRef.current.position.set(0, 120, 2);
+      // Top-down 90 degree satellite view
+      cameraRef.current.position.set(0, 140, 2);
       cameraRef.current.lookAt(0, 0, 0);
     } else if (preset === 'barrage') {
-      // Close reach looking through Prakasam Barrage gorge
-      cameraRef.current.position.set(-15, 22, 45);
-      cameraRef.current.lookAt(2, 6, 0);
+      // Closer reach looking at Prakasam Barrage
+      cameraRef.current.position.set(-20, 35, 50);
+      cameraRef.current.lookAt(0, 4, 0);
     } else if (preset === 'temple') {
-      // High elevation lookout from Indrakeeladri Hill
-      cameraRef.current.position.set(-35, 60, -25);
-      cameraRef.current.lookAt(10, 5, 10);
+      // Vantage from Indrakeeladri Hill
+      cameraRef.current.position.set(-45, 50, -30);
+      cameraRef.current.lookAt(10, 2, 10);
     } else {
-      // Floodplain inspection (Krishna Lanka & Tadepalli)
-      cameraRef.current.position.set(25, 30, 60);
-      cameraRef.current.lookAt(5, 4, 10);
+      // Lowland floodplain inspection
+      cameraRef.current.position.set(30, 40, 70);
+      cameraRef.current.lookAt(5, 2, 10);
     }
   };
 
@@ -579,27 +534,31 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
             <Box className="w-3.5 h-3.5 text-slate-300" />
             <span>DEM Elevation</span>
           </button>
-
-          <button
-            onClick={() => setMode3D('flood_only')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl font-medium transition-all ${
-              mode3D === 'flood_only'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Waves className="w-3.5 h-3.5" />
-            <span>Flood Only</span>
-          </button>
         </div>
 
-        {/* 3D Flood Opacity Slider */}
-        {mode3D === 'sat_flood' && (
-          <div className="glass-panel px-3 py-2 rounded-xl flex items-center space-x-3 text-xs border border-slate-800 shadow-xl text-slate-300">
-            <span className="flex items-center space-x-1.5 font-medium">
-              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Water Transparency:</span>
-            </span>
+        {/* Vertical Exaggeration & Flood Opacity Controls */}
+        <div className="glass-panel px-3 py-2 rounded-xl flex items-center space-x-4 text-xs border border-slate-800 shadow-xl text-slate-300">
+          <div className="flex items-center space-x-1.5">
+            <span className="text-slate-400">Vertical Relief:</span>
+            <div className="flex bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+              {[1.0, 1.5, 2.0].map((ex) => (
+                <button
+                  key={ex}
+                  onClick={() => setVerticalExag(ex)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
+                    verticalExag === ex ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {ex.toFixed(1)}×
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="h-3 w-[1px] bg-slate-700"></div>
+
+          <div className="flex items-center space-x-2">
+            <span className="text-slate-400">Water Opacity:</span>
             <input
               type="range"
               min={0.2}
@@ -607,14 +566,11 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
               step={0.05}
               value={floodOpacity}
               onChange={(e) => setFloodOpacity(parseFloat(e.target.value))}
-              className="w-28 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+              className="w-20 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
             />
-            <span className="font-mono text-cyan-400 font-bold w-10 text-right">
-              {Math.round(floodOpacity * 100)}%
-            </span>
-            <span className="text-slate-500 text-[10px]">• Satellite imagery visible beneath</span>
+            <span className="font-mono text-cyan-400 font-bold">{Math.round(floodOpacity * 100)}%</span>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Camera View Presets */}
@@ -633,7 +589,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
             activePreset === 'top' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
           }`}
         >
-          Top View (90°)
+          Top-Down (90°)
         </button>
         <button
           onClick={() => setCameraPreset('barrage')}
@@ -664,7 +620,7 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       {/* Bottom Left 3D Inundation Legend */}
       <div className="absolute bottom-6 left-4 z-10 glass-panel p-3.5 rounded-2xl shadow-2xl text-xs space-y-2 w-64 border border-slate-800">
         <div className="flex justify-between items-center text-xs font-semibold text-slate-200">
-          <span>3D Inundation Depth Scale</span>
+          <span>Inundation Depth Scale</span>
           <span className="font-mono text-cyan-400">0.0m - 3.5m+</span>
         </div>
 
