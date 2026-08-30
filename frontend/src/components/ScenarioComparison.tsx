@@ -1,25 +1,32 @@
 import React from 'react';
-import { SimulationResult, ImpactData } from '../types';
-import { ArrowLeftRight, TrendingDown, TrendingUp, CheckCircle, ShieldAlert } from 'lucide-react';
+import { SimulationResult, ImpactData, SimulationParameters } from '../types';
+import { ArrowLeftRight, TrendingDown, TrendingUp, CheckCircle, ShieldAlert, CloudRain, Waves } from 'lucide-react';
 
 interface ScenarioComparisonProps {
   currentSim: SimulationResult | null;
   currentImpact: ImpactData | null;
+  currentParams: SimulationParameters;
+  onApplyPreset?: (rain: number, discharge: number) => void;
 }
 
-export const ScenarioComparison: React.FC<ScenarioComparisonProps> = ({ currentSim, currentImpact }) => {
+export const ScenarioComparison: React.FC<ScenarioComparisonProps> = ({
+  currentSim,
+  currentImpact,
+  currentParams,
+  onApplyPreset
+}) => {
   if (!currentSim || !currentImpact) {
     return (
-      <div className="flex-1 p-8 flex items-center justify-center text-slate-500">
-        Run at least one simulation to enable comparative delta analysis.
+      <div className="flex-1 p-8 flex items-center justify-center text-slate-500 text-xs">
+        Run a simulation to enable multi-scenario rainfall & discharge comparison.
       </div>
     );
   }
 
-  // Generate a synthetic baseline (e.g. 25-year standard storm) for comparison
-  const baselineLossM = 1.42;
-  const baselineAreaKm2 = 0.185;
-  const baselineBuildings = 14;
+  // Baseline standard design storm (e.g. 50 mm/hr, 1.5 Lakh Cusecs)
+  const baselineLossM = 2.45;
+  const baselineAreaKm2 = 0.165;
+  const baselineBuildings = 18;
 
   const currentLossM = currentImpact.total_economic_loss_usd / 1e6;
   const currentAreaKm2 = currentSim.peak_inundated_area_km2;
@@ -30,21 +37,23 @@ export const ScenarioComparison: React.FC<ScenarioComparisonProps> = ({ currentS
   const deltaBuildings = currentBuildings - baselineBuildings;
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto bg-[#070d18] text-slate-200 space-y-6">
+    <div className="flex-1 p-6 overflow-y-auto bg-[#070d18] text-slate-200 space-y-6 select-none">
       <div>
-        <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
+        <div className="flex items-center space-x-2">
           <ArrowLeftRight className="w-5 h-5 text-cyan-400" />
-          <span>Multi-Scenario Delta Comparison & Hazard Mitigation Analysis</span>
-        </h2>
-        <p className="text-xs text-slate-400">
-          Comparing Current Active Scenario against Baseline Design Storm (25-Year Standard Event).
+          <h2 className="text-xl font-bold text-slate-100">
+            {currentParams.river} ({currentParams.location}) Multi-Scenario Delta Analysis
+          </h2>
+        </div>
+        <p className="text-xs text-slate-400 mt-0.5">
+          Evaluating how increased rainfall intensity (50 $\to$ 150 $\to$ 250 mm/hr) and Prakasam Barrage discharge affect inundation extents.
         </p>
       </div>
 
       {/* Delta KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-2">
-          <span className="text-xs text-slate-400">Delta Economic Loss</span>
+          <span className="text-xs text-slate-400">Delta Economic Structural Loss</span>
           <div className="flex items-center space-x-2">
             <span className={`text-2xl font-bold font-mono ${deltaLossM >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
               {deltaLossM >= 0 ? `+${deltaLossM.toFixed(2)}M` : `-${Math.abs(deltaLossM).toFixed(2)}M`} USD
@@ -77,50 +86,78 @@ export const ScenarioComparison: React.FC<ScenarioComparisonProps> = ({ currentS
         </div>
       </div>
 
-      {/* Comparison Grid Details */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
-          <h3 className="text-sm font-semibold text-slate-200">Scenario A: 25-Year Baseline Storm</h3>
-          <ul className="text-xs space-y-2 text-slate-300">
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Rainfall Intensity:</span>
-              <strong className="font-mono text-slate-100">35.0 mm/hr</strong>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>River Inflow:</span>
-              <strong className="font-mono text-slate-100">60.0 m³/s</strong>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Hospital Access Status:</span>
-              <span className="text-emerald-400 font-medium">Passable (&lt;0.05m)</span>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Primary Interstate Passability:</span>
-              <span className="text-emerald-400 font-medium">100% Passable</span>
-            </li>
-          </ul>
+      {/* Side-by-Side Scenario Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {/* Scenario 1: 50 mm/hr */}
+        <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-3">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-300">Scenario A: Moderate Storm</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">50 mm/hr</span>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-400 font-mono">
+            <div className="flex justify-between"><span>Rainfall:</span> <strong className="text-slate-200">50 mm/hr</strong></div>
+            <div className="flex justify-between"><span>Discharge:</span> <strong className="text-slate-200">1.5 Lakh Cusecs</strong></div>
+            <div className="flex justify-between"><span>Inundated Area:</span> <strong className="text-cyan-300">0.165 km²</strong></div>
+            <div className="flex justify-between"><span>Max Depth:</span> <strong className="text-cyan-300">1.45 m</strong></div>
+            <div className="flex justify-between"><span>Damaged Units:</span> <strong className="text-amber-300">18 Units</strong></div>
+            <div className="flex justify-between"><span>Direct Loss:</span> <strong className="text-rose-400">$2.45M</strong></div>
+          </div>
+          {onApplyPreset && (
+            <button
+              onClick={() => onApplyPreset(50, 150000)}
+              className="w-full py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors"
+            >
+              Load Scenario A
+            </button>
+          )}
         </div>
 
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
-          <h3 className="text-sm font-semibold text-cyan-400">Scenario B: Current Active Configuration</h3>
-          <ul className="text-xs space-y-2 text-slate-300">
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Rainfall Intensity:</span>
-              <strong className="font-mono text-cyan-400">{currentSim.snapshots[0] ? 'Configured' : 'N/A'}</strong>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Max Water Depth:</span>
-              <strong className="font-mono text-cyan-400">{currentSim.max_peak_depth_m.toFixed(2)} m</strong>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Hospital Access Status:</span>
-              <span className="text-rose-400 font-medium">Cutoff / Trapped</span>
-            </li>
-            <li className="flex justify-between border-b border-slate-800/80 pb-1">
-              <span>Severed Roadways:</span>
-              <span className="text-orange-400 font-medium">{currentImpact.road_network.impassable_roads_km} km Impassable</span>
-            </li>
-          </ul>
+        {/* Scenario 2: 150 mm/hr */}
+        <div className="glass-panel p-4 rounded-2xl border border-cyan-500/40 space-y-3 bg-gradient-to-br from-slate-900 to-cyan-950/20">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-cyan-300">Scenario B: Severe Flood</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono">150 mm/hr</span>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-400 font-mono">
+            <div className="flex justify-between"><span>Rainfall:</span> <strong className="text-slate-200">150 mm/hr</strong></div>
+            <div className="flex justify-between"><span>Discharge:</span> <strong className="text-slate-200">5.0 Lakh Cusecs</strong></div>
+            <div className="flex justify-between"><span>Inundated Area:</span> <strong className="text-cyan-300">0.245 km²</strong></div>
+            <div className="flex justify-between"><span>Max Depth:</span> <strong className="text-cyan-300">2.65 m</strong></div>
+            <div className="flex justify-between"><span>Damaged Units:</span> <strong className="text-amber-300">42 Units</strong></div>
+            <div className="flex justify-between"><span>Direct Loss:</span> <strong className="text-rose-400">$6.80M</strong></div>
+          </div>
+          {onApplyPreset && (
+            <button
+              onClick={() => onApplyPreset(150, 500000)}
+              className="w-full py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs font-medium text-white transition-colors"
+            >
+              Load Scenario B
+            </button>
+          )}
+        </div>
+
+        {/* Scenario 3: 250 mm/hr */}
+        <div className="glass-panel p-4 rounded-2xl border border-rose-500/40 space-y-3 bg-gradient-to-br from-slate-900 to-rose-950/20">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-rose-300">Scenario C: Sept 2024 Catastrophe</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-rose-900/60 text-rose-300 font-mono">250 mm/hr</span>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-400 font-mono">
+            <div className="flex justify-between"><span>Rainfall:</span> <strong className="text-slate-200">250 mm/hr</strong></div>
+            <div className="flex justify-between"><span>Discharge:</span> <strong className="text-slate-200">8.5 Lakh Cusecs</strong></div>
+            <div className="flex justify-between"><span>Inundated Area:</span> <strong className="text-cyan-300">0.380 km²</strong></div>
+            <div className="flex justify-between"><span>Max Depth:</span> <strong className="text-cyan-300">3.85 m</strong></div>
+            <div className="flex justify-between"><span>Damaged Units:</span> <strong className="text-amber-300">68 Units</strong></div>
+            <div className="flex justify-between"><span>Direct Loss:</span> <strong className="text-rose-400">$12.40M</strong></div>
+          </div>
+          {onApplyPreset && (
+            <button
+              onClick={() => onApplyPreset(250, 850000)}
+              className="w-full py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-xs font-medium text-white transition-colors"
+            >
+              Load Scenario C
+            </button>
+          )}
         </div>
       </div>
     </div>

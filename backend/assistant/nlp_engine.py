@@ -3,8 +3,8 @@ from typing import Dict, Any, Tuple
 
 class NaturalLanguageAssistant:
     """
-    Natural Language Conversational Co-Pilot for flood scenario parameterization,
-    what-if inquiries, and automated hazard summarization.
+    Natural Language Conversational Co-Pilot for location-based flood scenarios,
+    Krishna River & Vijayawada hydrology, what-if inquiries, and automated hazard summarization.
     """
     def __init__(self):
         pass
@@ -15,78 +15,107 @@ class NaturalLanguageAssistant:
         new_params = dict(current_params)
         response_text = ""
 
-        # 1. Rainfall adjustments
+        # 1. Location or River Switching
+        if "krishna" in prompt_lower or "vijayawada" in prompt_lower:
+            new_params["river"] = "Krishna River"
+            new_params["location"] = "Vijayawada"
+            actions.append("Selected Krishna River → Vijayawada (Detailed DEM & GIS)")
+        elif "amaravati" in prompt_lower:
+            new_params["river"] = "Krishna River"
+            new_params["location"] = "Amaravati"
+            actions.append("Selected Krishna River → Amaravati")
+        elif "godavari" in prompt_lower or "rajahmundry" in prompt_lower:
+            new_params["river"] = "Godavari River"
+            new_params["location"] = "Rajahmundry"
+            actions.append("Selected Godavari River → Rajahmundry (Schematic)")
+        elif "ganga" in prompt_lower or "patna" in prompt_lower:
+            new_params["river"] = "Ganga River"
+            new_params["location"] = "Patna"
+            actions.append("Selected Ganga River → Patna (Schematic)")
+
+        # 2. Rainfall adjustments (20 to 300 mm/hr)
         rain_match = re.search(r'(?:increase|decrease|change|set)\s+rainfall\s+(?:to|by)?\s*([+-]?\d+)\s*(%|mm|mm/hr)?', prompt_lower)
         if rain_match:
             val = float(rain_match.group(1))
             unit = rain_match.group(2)
+            cur_rain = current_params.get("rainfall_intensity_mmhr", 50.0)
             if "%" in prompt_lower or unit == "%":
                 if "decrease" in prompt_lower or "-" in prompt_lower:
-                    new_params["rainfall_intensity_mmhr"] = max(5.0, round(current_params["rainfall_intensity_mmhr"] * (1 - abs(val)/100.0), 1))
+                    new_params["rainfall_intensity_mmhr"] = max(20.0, round(cur_rain * (1 - abs(val)/100.0), 1))
                 else:
-                    new_params["rainfall_intensity_mmhr"] = min(150.0, round(current_params["rainfall_intensity_mmhr"] * (1 + abs(val)/100.0), 1))
+                    new_params["rainfall_intensity_mmhr"] = min(300.0, round(cur_rain * (1 + abs(val)/100.0), 1))
             else:
-                new_params["rainfall_intensity_mmhr"] = min(150.0, max(5.0, val))
+                new_params["rainfall_intensity_mmhr"] = min(300.0, max(20.0, val))
             actions.append(f"Updated rainfall intensity to {new_params['rainfall_intensity_mmhr']} mm/hr")
 
-        # 2. Return Period Presets
-        if "10-year" in prompt_lower or "10 yr" in prompt_lower or "10 year" in prompt_lower:
-            new_params["rainfall_intensity_mmhr"] = 28.0
-            new_params["river_discharge_m3s"] = 45.0
-            new_params["return_period_years"] = 10
-            actions.append("Configured 10-Year Return Period Storm (28 mm/hr, 45 m3/s inflow)")
-        elif "50-year" in prompt_lower or "50 yr" in prompt_lower or "50 year" in prompt_lower:
-            new_params["rainfall_intensity_mmhr"] = 52.0
-            new_params["river_discharge_m3s"] = 95.0
-            new_params["return_period_years"] = 50
-            actions.append("Configured 50-Year Return Period Storm (52 mm/hr, 95 m3/s inflow)")
-        elif "100-year" in prompt_lower or "100 yr" in prompt_lower or "100 year" in prompt_lower:
-            new_params["rainfall_intensity_mmhr"] = 75.0
-            new_params["river_discharge_m3s"] = 140.0
-            new_params["return_period_years"] = 100
-            actions.append("Configured 100-Year Design Flood (75 mm/hr, 140 m3/s inflow)")
-        elif "500-year" in prompt_lower or "500 yr" in prompt_lower or "500 year" in prompt_lower:
-            new_params["rainfall_intensity_mmhr"] = 110.0
-            new_params["river_discharge_m3s"] = 220.0
-            new_params["return_period_years"] = 500
-            actions.append("Configured Extreme 500-Year Catastrophe Scenario (110 mm/hr, 220 m3/s inflow)")
+        # 3. River Discharge Adjustments (Cusecs / Lakh Cusecs)
+        disch_match = re.search(r'(?:discharge|inflow|flow|cusecs)\s+(?:to|of)?\s*([+-]?\d+(?:\.\d+)?)\s*(lakh|k|thousand|cusecs|m3/s)?', prompt_lower)
+        if disch_match:
+            val = float(disch_match.group(1))
+            unit = disch_match.group(2) or ""
+            if "lakh" in prompt_lower or "lakh" in unit:
+                cusecs = val * 100000.0
+            elif "k" in unit or "thousand" in unit:
+                cusecs = val * 1000.0
+            else:
+                cusecs = val if val > 1000 else val * 100000.0
+            
+            cusecs = min(1200000.0, max(25000.0, cusecs))
+            new_params["river_discharge_cusecs"] = cusecs
+            actions.append(f"Updated Prakasam Barrage discharge to {int(cusecs):,} Cusecs ({cusecs/100000:.1f} Lakh Cusecs)")
 
-        # 3. Inquiries about Hospitals & Infrastructure
-        if "hospital" in prompt_lower or "health" in prompt_lower:
+        # 4. Preset Storm Scenarios for Vijayawada
+        if "moderate" in prompt_lower:
+            new_params["rainfall_intensity_mmhr"] = 50.0
+            new_params["river_discharge_cusecs"] = 150000.0
+            new_params["duration_hours"] = 4.0
+            actions.append("Configured Moderate Monsoon Flood (50 mm/hr, 1.5 Lakh Cusecs)")
+        elif "heavy" in prompt_lower or "100-year" in prompt_lower:
+            new_params["rainfall_intensity_mmhr"] = 150.0
+            new_params["river_discharge_cusecs"] = 500000.0
+            new_params["duration_hours"] = 6.0
+            actions.append("Configured Severe Flood Scenario (150 mm/hr, 5.0 Lakh Cusecs)")
+        elif "extreme" in prompt_lower or "2024" in prompt_lower or "historic" in prompt_lower:
+            new_params["rainfall_intensity_mmhr"] = 250.0
+            new_params["river_discharge_cusecs"] = 850000.0
+            new_params["duration_hours"] = 12.0
+            actions.append("Configured Historic Sept 2024 Disaster Benchmark (250 mm/hr, 8.5 Lakh Cusecs)")
+
+        # 5. Queries about Krishna River Hospitals & Infrastructure
+        if "hospital" in prompt_lower or "health" in prompt_lower or "ggh" in prompt_lower:
             if impact_data and "critical_facilities_status" in impact_data:
-                hosp = next((f for f in impact_data["critical_facilities_status"] if f["type"] == "Hospital"), None)
-                if hosp:
-                    if hosp["is_flooded"]:
-                        response_text = f"🚨 **Critical Alert**: {hosp['name']} is projected to experience inundation of {hosp['depth_m']}m. Access roads are cutoff starting around T+{hosp['cutoff_time_hr']} hours. Status: {hosp['status']}."
+                ggh = next((f for f in impact_data["critical_facilities_status"] if "GGH" in f["name"] or f["type"] == "Hospital"), None)
+                if ggh:
+                    if ggh["is_flooded"]:
+                        response_text = f"🚨 **Hospital Inundation Alert**: {ggh['name']} is projected to experience water depth of **{ggh['depth_m']}m**. Access routes via MG Road and Eluru Road become restricted around T+{ggh['cutoff_time_hr']} hours. Status: **{ggh['status']}**."
                     else:
-                        response_text = f"✅ **Operational**: {hosp['name']} remains safe above flood stage (perimeter depth: {hosp['depth_m']}m). Primary emergency access route is passable."
+                        response_text = f"✅ **Operational**: {ggh['name']} remains safe above flood stage (perimeter depth: {ggh['depth_m']}m). Primary emergency access corridors remain open."
             else:
-                response_text = "St. Jude Metropolitan Hospital is located in the central valley zone. Under severe rainfall (>60 mm/hr), the Hospital Emergency Access Way experiences critical inundation by T+02:00."
+                response_text = "Government General Hospital (GGH) Vijayawada is situated on the North Bank. Under extreme river discharge (>6.0 Lakh Cusecs), drainage backflow from the Krishna River causes surrounding access streets to submerge."
 
-        # 4. Inquiries about Roads & Evacuation
-        elif "road" in prompt_lower or "evacuation" in prompt_lower or "route" in prompt_lower:
-            if impact_data and "road_network" in impact_data:
-                rn = impact_data["road_network"]
-                response_text = f"🛣️ **Road Passability Status**: {rn['impassable_roads_km']} km of roads are currently impassable / severed. {rn['emergency_only_roads_km']} km require high-clearance 4WD vehicles. {rn['passable_roads_km']} km of arterial corridors remain fully open."
+        # 6. Queries about River Banks (North vs South Bank)
+        elif "bank" in prompt_lower or "side" in prompt_lower or "tadepalli" in prompt_lower or "krishna lanka" in prompt_lower:
+            if impact_data and "bank_impacts" in impact_data:
+                nb = impact_data["bank_impacts"]["north_bank"]
+                sb = impact_data["bank_impacts"]["south_bank"]
+                response_text = f"🌊 **River Bank Inundation Breakdown**:\n• **North Bank (Vijayawada Urban / Krishna Lanka)**: {nb['inundated_area_km2']} km² flooded, {nb['damaged_buildings']} buildings affected (${round(nb['loss_usd']/1e6, 2)}M loss).\n• **South Bank (Tadepalli / Undavalli)**: {sb['inundated_area_km2']} km² flooded, {sb['damaged_buildings']} buildings affected (${round(sb['loss_usd']/1e6, 2)}M loss)."
             else:
-                response_text = "The Interstate Route 90 Express corridor and Riverside Grand Boulevard serve as the primary evacuation arteries. When river inflow exceeds 100 m3/s, the low-lying underpasses flood first."
+                response_text = "During Krishna River floods, the North Bank (Krishna Lanka & Bhavanipuram) experiences pluvial backwater logging, while the South Bank (Tadepalli & Undavalli lowlands) experiences direct riverine overbank flooding."
 
-        # 5. Inquiries about Total Damage or Loss
-        elif "damage" in prompt_lower or "loss" in prompt_lower or "economic" in prompt_lower or "cost" in prompt_lower:
-            if impact_data:
-                loss_m = round(impact_data["total_economic_loss_usd"] / 1e6, 2)
-                bld_count = impact_data["total_damaged_buildings"]
-                disp_pop = impact_data["population_metrics"]["displaced_population"]
-                response_text = f"📊 **Economic Damage Summary**: Estimated total direct structural loss is **${loss_m}M USD** across **{bld_count} damaged structures**. An estimated **{disp_pop} residents** will require emergency shelter."
+        # 7. Queries about Satellite Observation (ISRO / Sentinel-1)
+        elif "satellite" in prompt_lower or "observed" in prompt_lower or "isro" in prompt_lower or "sentinel" in prompt_lower:
+            if impact_data and impact_data.get("satellite_validation"):
+                sat = impact_data["satellite_validation"]
+                response_text = f"🛰️ **Satellite Validation (ISRO / Sentinel-1 SAR)**:\n• **Event**: {sat['dataset_source']}\n• **Critical Success Index (IoU)**: **{sat['iou_critical_success_index']}**\n• **Precision**: {sat['precision']} | **Recall**: {sat['recall']}\n• **Observed Flooded Area**: {sat['observed_flooded_area_km2']} km² vs **Simulated**: {sat['simulated_flooded_area_km2']} km²."
             else:
-                response_text = "Total economic loss is calculated in real time based on USACE HAZUS depth-damage functions intersecting building typologies with maximum peak water depths."
+                response_text = "The satellite comparison engine validates simulated flood extents against ISRO / NRSC & Sentinel-1 SAR observed inundation from the September 2024 Krishna River flood event."
 
         # Default synthesis
         if not response_text:
             if actions:
-                response_text = f"✅ **Parameters Updated**: {', '.join(actions)}. You can run the Fast AI or 2D Physics simulation now to view updated flood propagation."
+                response_text = f"✅ **Parameters Applied**: {', '.join(actions)}. Click 'Run Simulation' to visualize the updated flood wave across Vijayawada."
             else:
-                response_text = f"I am your HydroForge AI Co-Pilot. I can configure storm scenarios (e.g. *'Set 100-year storm'*, *'Increase rainfall by 25%'*), query hospital access cutoffs, analyze road passability, or compute structural damage estimates."
+                response_text = f"I am your HydroForge AI Co-Pilot for the **Krishna River (Vijayawada)** basin. You can ask me to:\n• *'Set 150 mm/hr rainfall with 5 Lakh Cusecs discharge'*\n• *'Which hospitals lose road access?'*\n• *'Compare North Bank vs South Bank impacts'*\n• *'Show satellite observed flood validation (ISRO/Sentinel-1)'*."
 
         return {
             "response_text": response_text,

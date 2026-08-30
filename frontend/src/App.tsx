@@ -6,33 +6,93 @@ import { Terrain3DViewer } from './components/Terrain3DViewer';
 import { TimeSliderController } from './components/TimeSliderController';
 import { ImpactDashboard } from './components/ImpactDashboard';
 import { ScenarioComparison } from './components/ScenarioComparison';
+import { ObservedSatelliteCompare } from './components/ObservedSatelliteCompare';
+import { WeatherPanel } from './components/WeatherPanel';
 import { AICoPilotSidebar } from './components/AICoPilotSidebar';
 import { ExportModal } from './components/ExportModal';
-import { GISData, SimulationResult, ImpactData, SimulationParameters, ChatMessage, FullSimulationResponse } from './types';
+import {
+  GISData,
+  SimulationResult,
+  ImpactData,
+  SimulationParameters,
+  ChatMessage,
+  FullSimulationResponse,
+  RiverLocationHierarchy
+} from './types';
 import { RotateCw, AlertCircle, Sparkles } from 'lucide-react';
 
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://127.0.0.1:8000';
 
 export const App: React.FC = () => {
   const [gisData, setGisData] = useState<GISData | null>(null);
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [impact, setImpact] = useState<ImpactData | null>(null);
-  const [currentTimestep, setCurrentTimestep] = useState<number>(3); // Default to peak hour
-  const [activeTab, setActiveTab] = useState<'2d_map' | '3d_terrain' | 'impact' | 'comparison'>('2d_map');
+  const [currentTimestep, setCurrentTimestep] = useState<number>(3); // Peak 3h
+  const [activeTab, setActiveTab] = useState<'3d_terrain' | '2d_map' | 'satellite' | 'impact' | 'comparison'>('3d_terrain');
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
-  const [latencyMs, setLatencyMs] = useState<number>(75);
+  const [latencyMs, setLatencyMs] = useState<number>(85);
   const [error, setError] = useState<string | null>(null);
 
   // Modals & Drawers
   const [isAssistantOpen, setIsAssistantOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
+  const [isWeatherOpen, setIsWeatherOpen] = useState<boolean>(false);
+
+  // Supported Hierarchy
+  const [hierarchy, setHierarchy] = useState<RiverLocationHierarchy>({
+    'Krishna River': {
+      status: 'detailed',
+      badge: 'Detailed DEM & GIS',
+      default_location: 'Vijayawada',
+      locations: [
+        { id: 'vijayawada', name: 'Vijayawada', status: 'detailed', state: 'Andhra Pradesh' },
+        { id: 'amaravati', name: 'Amaravati', status: 'detailed', state: 'Andhra Pradesh' },
+        { id: 'tadepalli', name: 'Tadepalli', status: 'detailed', state: 'Andhra Pradesh' },
+        { id: 'mangalagiri', name: 'Mangalagiri', status: 'detailed', state: 'Andhra Pradesh' },
+        { id: 'ibrahimpatnam', name: 'Ibrahimpatnam', status: 'detailed', state: 'Andhra Pradesh' }
+      ]
+    },
+    'Godavari River': {
+      status: 'schematic',
+      badge: 'Schematic / Approximate',
+      default_location: 'Rajahmundry',
+      locations: [
+        { id: 'rajahmundry', name: 'Rajahmundry (Dowleswaram)', status: 'schematic', state: 'Andhra Pradesh' }
+      ]
+    },
+    'Ganga River': {
+      status: 'schematic',
+      badge: 'Schematic / Approximate',
+      default_location: 'Patna',
+      locations: [
+        { id: 'patna', name: 'Patna (Ganges-Son Confluence)', status: 'schematic', state: 'Bihar' }
+      ]
+    },
+    'Yamuna River': {
+      status: 'schematic',
+      badge: 'Schematic / Approximate',
+      default_location: 'Delhi',
+      locations: [
+        { id: 'delhi', name: 'Delhi (ITO / Yamuna Floodplain)', status: 'schematic', state: 'Delhi NCR' }
+      ]
+    },
+    'Cauvery River': {
+      status: 'schematic',
+      badge: 'Schematic / Approximate',
+      default_location: 'Tiruchirappalli',
+      locations: [
+        { id: 'tiruchirappalli', name: 'Tiruchirappalli (Grand Anicut)', status: 'schematic', state: 'Tamil Nadu' }
+      ]
+    }
+  });
 
   // Scenario Parameters
   const [params, setParams] = useState<SimulationParameters>({
-    rainfall_intensity_mmhr: 52.0,
+    river: 'Krishna River',
+    location: 'Vijayawada',
+    rainfall_intensity_mmhr: 50.0,
     duration_hours: 4.0,
-    river_discharge_m3s: 95.0,
-    return_period_years: 50,
+    river_discharge_cusecs: 250000.0,
     engine_mode: 'fast_ai'
   });
 
@@ -44,6 +104,7 @@ export const App: React.FC = () => {
     buildings: true,
     roads: true,
     criticalFacilities: true,
+    observedSatellite: false,
   });
 
   // Chat Messages
@@ -51,7 +112,7 @@ export const App: React.FC = () => {
     {
       id: '1',
       sender: 'assistant',
-      text: '👋 Welcome to **HydroForge AI**. I am your hydrodynamic co-pilot. You can adjust storm parameters or ask me questions like *"Which hospital loses access?"* or *"Set 100-year storm"*.',
+      text: '👋 Welcome to **HydroForge AI (Krishna River — Vijayawada Edition)**. I am your hydrodynamic co-pilot. You can adjust storm parameters, test 50 to 300 mm/hr rainfall, or ask me questions like *"Which hospitals lose access?"* or *"Set 150 mm/hr rainfall with 5 Lakh Cusecs discharge"*.',
       timestamp: 'Just now'
     }
   ]);
@@ -91,17 +152,42 @@ export const App: React.FC = () => {
     }
   }, [params]);
 
+  // Fetch GIS data when River or Location changes
+  const loadLocationGIS = useCallback(async (targetRiver: string, targetLoc: string) => {
+    try {
+      const gisRes = await fetch(`${API_BASE}/api/gis/data?river=${encodeURIComponent(targetRiver)}&location=${encodeURIComponent(targetLoc)}`);
+      if (!gisRes.ok) throw new Error('Failed to load location GIS data');
+      const gis: GISData = await gisRes.json();
+      setGisData(gis);
+      return gis;
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Failed to fetch GIS data');
+      return null;
+    }
+  }, []);
+
   // Initial Data Fetch
   useEffect(() => {
     const init = async () => {
       try {
-        const gisRes = await fetch(`${API_BASE}/api/gis/data`);
-        if (!gisRes.ok) throw new Error('Failed to load GIS data');
-        const gis: GISData = await gisRes.json();
-        setGisData(gis);
+        // Fetch locations hierarchy
+        const locRes = await fetch(`${API_BASE}/api/locations`);
+        if (locRes.ok) {
+          const hier = await locRes.json();
+          setHierarchy(hier);
+        }
+
+        // Fetch Vijayawada GIS
+        await loadLocationGIS('Krishna River', 'Vijayawada');
 
         // Run default baseline simulation
-        await handleRunSimulation();
+        await handleRunSimulation({
+          river: 'Krishna River',
+          location: 'Vijayawada',
+          rainfall_intensity_mmhr: 50.0,
+          river_discharge_cusecs: 250000.0,
+        });
       } catch (err: any) {
         console.error(err);
         setError('Backend server offline. Please make sure the FastAPI server is running on port 8000.');
@@ -109,6 +195,19 @@ export const App: React.FC = () => {
     };
     init();
   }, []);
+
+  // Handle River & Location selection change
+  const handleParamsChange = async (newP: Partial<SimulationParameters>) => {
+    const nextParams = { ...params, ...newP };
+    setParams(nextParams);
+
+    if (newP.river || newP.location) {
+      const r = newP.river || params.river;
+      const l = newP.location || params.location;
+      await loadLocationGIS(r, l);
+      await handleRunSimulation(nextParams);
+    }
+  };
 
   // Handle Assistant Query
   const handleSendMessage = async (text: string) => {
@@ -145,8 +244,7 @@ export const App: React.FC = () => {
 
       // If parameters were updated, auto re-run simulation
       if (data.should_rerun_simulation && data.updated_params) {
-        setParams(data.updated_params);
-        await handleRunSimulation(data.updated_params);
+        await handleParamsChange(data.updated_params);
       }
     } catch (err: any) {
       setMessages(prev => [
@@ -169,7 +267,7 @@ export const App: React.FC = () => {
         <div className="w-12 h-12 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-400">
           <AlertCircle className="w-7 h-7" />
         </div>
-        <h1 className="text-xl font-bold text-slate-100">Connecting to HydroForge AI Simulation Engine</h1>
+        <h1 className="text-xl font-bold text-slate-100">HydroForge AI Simulation Engine</h1>
         <p className="text-xs text-slate-400 max-w-md">{error}</p>
         <button
           onClick={() => window.location.reload()}
@@ -184,24 +282,24 @@ export const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0b111e] overflow-hidden">
-      {/* Top Header */}
+      {/* Top Header with River & Location dropdowns */}
       <Header
         params={params}
-        onParamsChange={(newP) => {
-          setParams(prev => ({ ...prev, ...newP }));
-          handleRunSimulation(newP);
-        }}
+        onParamsChange={handleParamsChange}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAssistant={() => setIsAssistantOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
+        onOpenWeather={() => setIsWeatherOpen(true)}
+        hierarchy={hierarchy}
         isSimulating={isSimulating}
         latencyMs={latencyMs}
+        dataStatus={gisData?.status || 'detailed'}
       />
 
       {/* Main Workspace Body */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Scenario Sidebar */}
+        {/* Left Hydrology & Scenario Sidebar */}
         <ScenarioSidebar
           params={params}
           onParamsChange={(newP) => setParams(prev => ({ ...prev, ...newP }))}
@@ -211,10 +309,25 @@ export const App: React.FC = () => {
           onToggleLayer={toggleLayer}
         />
 
-        {/* Center Main View Area */}
+        {/* Center Main Viewport */}
         <main className="flex-1 flex flex-col relative overflow-hidden">
           {gisData ? (
             <>
+              {activeTab === '3d_terrain' && (
+                <div className="flex-1 relative">
+                  <Terrain3DViewer
+                    gisData={gisData}
+                    simulation={simulation}
+                    currentTimestep={currentTimestep}
+                  />
+                  <TimeSliderController
+                    simulation={simulation}
+                    currentTimestep={currentTimestep}
+                    onTimestepChange={setCurrentTimestep}
+                  />
+                </div>
+              )}
+
               {activeTab === '2d_map' && (
                 <div className="flex-1 relative">
                   <MapViewer2D
@@ -232,33 +345,40 @@ export const App: React.FC = () => {
                 </div>
               )}
 
-              {activeTab === '3d_terrain' && (
-                <div className="flex-1 relative">
-                  <Terrain3DViewer
-                    gisData={gisData}
-                    simulation={simulation}
-                    currentTimestep={currentTimestep}
-                  />
-                  <TimeSliderController
-                    simulation={simulation}
-                    currentTimestep={currentTimestep}
-                    onTimestepChange={setCurrentTimestep}
-                  />
-                </div>
+              {activeTab === 'satellite' && (
+                <ObservedSatelliteCompare
+                  gisData={gisData}
+                  simulation={simulation}
+                  impact={impact}
+                />
               )}
 
               {activeTab === 'impact' && (
-                <ImpactDashboard impact={impact} />
+                <ImpactDashboard
+                  impact={impact}
+                  river={params.river}
+                  location={params.location}
+                />
               )}
 
               {activeTab === 'comparison' && (
-                <ScenarioComparison currentSim={simulation} currentImpact={impact} />
+                <ScenarioComparison
+                  currentSim={simulation}
+                  currentImpact={impact}
+                  currentParams={params}
+                  onApplyPreset={(rain, disch) => {
+                    handleParamsChange({
+                      rainfall_intensity_mmhr: rain,
+                      river_discharge_cusecs: disch
+                    });
+                  }}
+                />
               )}
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-slate-500 text-xs">
               <RotateCw className="w-5 h-5 animate-spin text-cyan-400 mr-2" />
-              <span>Loading Catchment Topography & GIS Mesh...</span>
+              <span>Loading {params.location} Topography & GIS Mesh...</span>
             </div>
           )}
         </main>
@@ -270,6 +390,13 @@ export const App: React.FC = () => {
           messages={messages}
           onSendMessage={handleSendMessage}
           isProcessing={isProcessingChat}
+        />
+
+        {/* Weather Intelligence Panel */}
+        <WeatherPanel
+          isOpen={isWeatherOpen}
+          onClose={() => setIsWeatherOpen(false)}
+          weather={gisData?.weather}
         />
 
         {/* Export Modal */}

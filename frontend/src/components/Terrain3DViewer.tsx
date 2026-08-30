@@ -1,7 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { GISData, SimulationResult } from '../types';
-import { Eye, RotateCw, Box } from 'lucide-react';
+import { Eye, RotateCw, Box, Compass, Sparkles, Navigation, Layers } from 'lucide-react';
 
 interface Terrain3DViewerProps {
   gisData: GISData;
@@ -19,8 +19,12 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const waterMeshRef = useRef<THREE.Mesh | null>(null);
+  const particlesRef = useRef<THREE.Points | null>(null);
+  const buildingMeshesRef = useRef<THREE.Mesh[]>([]);
   const isDraggingRef = useRef(false);
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
+
+  const [activePreset, setActivePreset] = useState<'iso' | 'top' | 'river' | 'temple'>('iso');
 
   const grid_size = gisData.grid_size;
   const currentSnapshot = simulation?.snapshots[currentTimestep] || null;
@@ -28,39 +32,47 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
   useEffect(() => {
     if (!mountRef.current) return;
 
-    // 1. Scene Setup
+    // 1. Scene & Camera Setup
     const width = mountRef.current.clientWidth;
     const height = mountRef.current.clientHeight;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#070d18');
-    scene.fog = new THREE.FogExp2('#070d18', 0.008);
+    scene.fog = new THREE.FogExp2('#070d18', 0.007);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
-    camera.position.set(60, 65, 85);
-    camera.lookAt(0, 10, 0);
+    camera.position.set(65, 70, 85);
+    camera.lookAt(0, 8, 0);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     rendererRef.current = renderer;
 
     mountRef.current.appendChild(renderer.domElement);
 
-    // 2. Lights
-    const ambientLight = new THREE.AmbientLight('#94a3b8', 0.8);
+    // 2. Realistic Lighting for Krishna River Basin
+    const ambientLight = new THREE.AmbientLight('#94a3b8', 0.9);
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight('#ffffff', 1.4);
-    dirLight.position.set(40, 80, 50);
-    dirLight.castShadow = true;
-    scene.add(dirLight);
+    const sunLight = new THREE.DirectionalLight('#ffffff', 1.5);
+    sunLight.position.set(45, 95, 60);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    scene.add(sunLight);
 
-    // 3. Terrain Heightfield Plane
-    const planeGeo = new THREE.PlaneGeometry(80, 80, grid_size - 1, grid_size - 1);
+    // Secondary soft blue fill light for water reflection
+    const blueFill = new THREE.DirectionalLight('#38bdf8', 0.6);
+    blueFill.position.set(-50, 40, -50);
+    scene.add(blueFill);
+
+    // 3. Terrain Heightfield Plane for Vijayawada
+    const planeGeo = new THREE.PlaneGeometry(90, 90, grid_size - 1, grid_size - 1);
     planeGeo.rotateX(-Math.PI / 2);
 
     const pos = planeGeo.attributes.position;
@@ -68,19 +80,48 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     const minElev = gisData.min_elevation;
     const maxElev = gisData.max_elevation;
 
-    // Apply DEM elevations to vertices
     for (let i = 0; i < pos.count; i++) {
       const x = i % grid_size;
       const y = Math.floor(i / grid_size);
       const elev = dem[y][x];
-      pos.setY(i, (elev - minElev) * 0.75); // Vertical scale
+      // Vertical exaggeration factor
+      pos.setY(i, (elev - minElev) * 0.72);
     }
     planeGeo.computeVertexNormals();
 
+    // Create vertex colors for realistic GIS terrain styling (Riverbed sandy dark, Lowlands urban green/grey, Indrakeeladri rocky hill)
+    const count = pos.count;
+    const colors = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i++) {
+      const x = i % grid_size;
+      const y = Math.floor(i / grid_size);
+      const elev = dem[y][x];
+      const norm = (elev - minElev) / (maxElev - minElev || 1);
+
+      if (elev < 15.0) {
+        // Deep Krishna River Channel: Dark sand/slate
+        colors[i * 3] = 0.08;
+        colors[i * 3 + 1] = 0.14;
+        colors[i * 3 + 2] = 0.20;
+      } else if (elev < 26.0) {
+        // Urban plains (Vijayawada / Tadepalli): Muted urban green/slate
+        colors[i * 3] = 0.12 + norm * 0.08;
+        colors[i * 3 + 1] = 0.18 + norm * 0.10;
+        colors[i * 3 + 2] = 0.16 + norm * 0.06;
+      } else {
+        // Indrakeeladri / Gunadala Hills: Rocky reddish brown & vegetation
+        colors[i * 3] = 0.28 + norm * 0.22;
+        colors[i * 3 + 1] = 0.22 + norm * 0.14;
+        colors[i * 3 + 2] = 0.16 + norm * 0.08;
+      }
+    }
+    planeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
     const terrainMat = new THREE.MeshStandardMaterial({
-      color: '#1e293b',
+      vertexColors: true,
       roughness: 0.85,
-      metalness: 0.1,
+      metalness: 0.08,
       flatShading: true,
     });
     const terrainMesh = new THREE.Mesh(planeGeo, terrainMat);
@@ -88,44 +129,94 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     scene.add(terrainMesh);
 
     // 4. Dynamic Water Mesh
-    const waterGeo = new THREE.PlaneGeometry(80, 80, grid_size - 1, grid_size - 1);
+    const waterGeo = new THREE.PlaneGeometry(90, 90, grid_size - 1, grid_size - 1);
     waterGeo.rotateX(-Math.PI / 2);
 
     const waterMat = new THREE.MeshPhysicalMaterial({
       color: '#0284c7',
       transparent: true,
-      opacity: 0.82,
-      roughness: 0.1,
-      metalness: 0.15,
-      transmission: 0.6,
+      opacity: 0.84,
+      roughness: 0.08,
+      metalness: 0.2,
+      transmission: 0.65,
       ior: 1.333,
-      reflectivity: 0.8,
+      reflectivity: 0.85,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.1,
     });
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMeshRef.current = waterMesh;
     scene.add(waterMesh);
 
-    // 5. 3D Building Extrusions
-    const bGroup = new THREE.Group();
-    gisData.assets.buildings.forEach((b) => {
-      const bx = ((b.grid_x / (grid_size - 1)) - 0.5) * 80;
-      const bz = ((b.grid_y / (grid_size - 1)) - 0.5) * 80;
-      const bElev = (b.elevation_m - minElev) * 0.75;
-      const bHeight = b.floors * 2.2;
+    // 5. Water Flow Particles (Streamlines moving downstream from NW to SE through Prakasam Barrage)
+    const particleCount = 280;
+    const particleGeo = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
+    const particleSpeeds = new Float32Array(particleCount);
 
-      const bGeo = new THREE.BoxGeometry(1.4, bHeight, 1.4);
+    for (let i = 0; i < particleCount; i++) {
+      // Spawn along Krishna River corridor
+      const t = Math.random();
+      const px = (t - 0.5) * 80;
+      const pz = (0.45 * (px / 40) * 40 + Math.sin(px * 0.08) * 10) + (Math.random() - 0.5) * 8;
+      
+      particlePositions[i * 3] = px;
+      particlePositions[i * 3 + 1] = 2.0; // Y elevation
+      particlePositions[i * 3 + 2] = pz;
+      particleSpeeds[i] = 0.25 + Math.random() * 0.45;
+    }
+
+    particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    const particleMat = new THREE.PointsMaterial({
+      color: '#38bdf8',
+      size: 1.2,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending
+    });
+    const particles = new THREE.Points(particleGeo, particleMat);
+    particlesRef.current = particles;
+    scene.add(particles);
+
+    // 6. 3D Extruded Buildings & Landmarks
+    const bGroup = new THREE.Group();
+    buildingMeshesRef.current = [];
+
+    gisData.assets.buildings.forEach((b) => {
+      const bx = ((b.grid_x / (grid_size - 1)) - 0.5) * 90;
+      const bz = ((b.grid_y / (grid_size - 1)) - 0.5) * 90;
+      const bElev = (b.elevation_m - minElev) * 0.72;
+      const bHeight = Math.max(2.5, b.floors * 2.2);
+
+      const bGeo = new THREE.BoxGeometry(1.5, bHeight, 1.5);
       const bMat = new THREE.MeshStandardMaterial({
-        color: b.type === 'Commercial' ? '#64748b' : '#475569',
-        roughness: 0.4,
+        color: b.type === 'Commercial' ? '#64748b' : b.type === 'Industrial' ? '#475569' : '#334155',
+        roughness: 0.5,
       });
       const bMesh = new THREE.Mesh(bGeo, bMat);
       bMesh.position.set(bx, bElev + bHeight / 2, bz);
       bMesh.castShadow = true;
+      bMesh.receiveShadow = true;
+      (bMesh as any).grid_x = b.grid_x;
+      (bMesh as any).grid_y = b.grid_y;
+      (bMesh as any).bElev = bElev;
+      (bMesh as any).bHeight = bHeight;
+
+      buildingMeshesRef.current.push(bMesh);
       bGroup.add(bMesh);
     });
+
+    // Add Prakasam Barrage 3D Model Bridge Span
+    const barrageGeo = new THREE.BoxGeometry(1.8, 3.0, 16.0);
+    const barrageMat = new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.3 });
+    const barrageMesh = new THREE.Mesh(barrageGeo, barrageMat);
+    barrageMesh.position.set(-1.0, 5.5, 0.0);
+    barrageMesh.castShadow = true;
+    bGroup.add(barrageMesh);
+
     scene.add(bGroup);
 
-    // Mouse Drag Rotation
+    // Mouse Drag Rotation & Orbit Handling
     const handleMouseDown = (e: MouseEvent) => {
       isDraggingRef.current = true;
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
@@ -145,8 +236,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
 
       cam.position.x = radius * Math.cos(currentAngle - angleX);
       cam.position.z = radius * Math.sin(currentAngle - angleX);
-      cam.position.y = Math.max(15, Math.min(120, cam.position.y + angleY * 15));
-      cam.lookAt(0, 10, 0);
+      cam.position.y = Math.max(12, Math.min(130, cam.position.y + angleY * 18));
+      cam.lookAt(0, 8, 0);
 
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -163,11 +254,12 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     // Animation Loop
     let animationFrameId: number;
     let waveTime = 0;
+
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      waveTime += 0.03;
+      waveTime += 0.035;
 
-      // Subtle water wave ripple effect
+      // 1. Dynamic Water Mesh Elevation
       if (waterMeshRef.current) {
         const wPos = waterMeshRef.current.geometry.attributes.position;
         const depths = currentSnapshot?.depth_grid;
@@ -175,17 +267,55 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
         for (let i = 0; i < wPos.count; i++) {
           const gx = i % grid_size;
           const gy = Math.floor(i / grid_size);
-          const elev = (dem[gy][gx] - minElev) * 0.75;
+          const elev = (dem[gy][gx] - minElev) * 0.72;
           const d = depths ? depths[gy][gx] : 0;
 
           if (d > 0.02) {
-            const ripple = Math.sin(gx * 0.5 + waveTime) * Math.cos(gy * 0.5 + waveTime) * 0.15;
-            wPos.setY(i, elev + d * 0.75 + ripple);
+            // Animated undulating water ripples
+            const ripple = Math.sin(gx * 0.45 + waveTime) * Math.cos(gy * 0.45 + waveTime) * 0.18;
+            wPos.setY(i, elev + d * 0.72 + ripple);
           } else {
-            wPos.setY(i, elev - 1.0); // Hide dry water surface beneath terrain
+            wPos.setY(i, elev - 2.0); // Hide dry plane beneath ground
           }
         }
         wPos.needsUpdate = true;
+      }
+
+      // 2. Animate Water Flow Particles along Krishna Channel
+      if (particlesRef.current) {
+        const pPos = particlesRef.current.geometry.attributes.position;
+        const pArray = pPos.array as Float32Array;
+
+        for (let i = 0; i < particleCount; i++) {
+          pArray[i * 3] += particleSpeeds[i] * 0.65; // Move X forward
+          // Follow Krishna River curvature: Z = 0.45*X + sin(X)*...
+          const currentPx = pArray[i * 3];
+          pArray[i * 3 + 2] = (0.45 * (currentPx / 45) * 45 + Math.sin(currentPx * 0.07) * 9);
+
+          // Reset particle to upstream NW when it flows off downstream
+          if (pArray[i * 3] > 44) {
+            pArray[i * 3] = -44;
+          }
+        }
+        pPos.needsUpdate = true;
+      }
+
+      // 3. Dynamic Building Immersion Color Updating
+      if (buildingMeshesRef.current.length > 0 && currentSnapshot) {
+        const depths = currentSnapshot.depth_grid;
+        buildingMeshesRef.current.forEach((bMesh) => {
+          const gx = (bMesh as any).grid_x;
+          const gy = (bMesh as any).grid_y;
+          const bDepth = depths ? depths[gy][gx] || 0 : 0;
+
+          if (bDepth > 1.2) {
+            (bMesh.material as THREE.MeshStandardMaterial).color.set('#ef4444'); // Critical Red
+          } else if (bDepth > 0.3) {
+            (bMesh.material as THREE.MeshStandardMaterial).color.set('#f59e0b'); // Warning Yellow
+          } else {
+            (bMesh.material as THREE.MeshStandardMaterial).color.set('#64748b'); // Safe Slate
+          }
+        });
       }
 
       renderer.render(scene, camera);
@@ -215,16 +345,24 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
     };
   }, [gisData]);
 
-  const setCameraPreset = (preset: 'iso' | 'top' | 'low') => {
+  const setCameraPreset = (preset: 'iso' | 'top' | 'river' | 'temple') => {
     if (!cameraRef.current) return;
+    setActivePreset(preset);
     if (preset === 'iso') {
-      cameraRef.current.position.set(60, 65, 85);
+      cameraRef.current.position.set(65, 70, 85);
+      cameraRef.current.lookAt(0, 8, 0);
     } else if (preset === 'top') {
-      cameraRef.current.position.set(0, 110, 5);
+      cameraRef.current.position.set(0, 115, 5);
+      cameraRef.current.lookAt(0, 0, 0);
+    } else if (preset === 'river') {
+      // Low angle inspecting Prakasam Barrage and Krishna Lanka lowlands
+      cameraRef.current.position.set(-20, 18, 45);
+      cameraRef.current.lookAt(5, 6, 0);
     } else {
-      cameraRef.current.position.set(30, 20, 60);
+      // High lookout from Indrakeeladri Hill
+      cameraRef.current.position.set(-35, 55, -25);
+      cameraRef.current.lookAt(10, 5, 10);
     }
-    cameraRef.current.lookAt(0, 10, 0);
   };
 
   return (
@@ -232,14 +370,30 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
       {/* Floating 3D HUD */}
-      <div className="absolute top-4 left-4 z-10 flex items-center space-x-2">
-        <div className="glass-panel px-3 py-2 rounded-xl text-xs flex items-center space-x-3 text-slate-300 shadow-xl">
+      <div className="absolute top-4 left-4 z-10 flex flex-col space-y-2">
+        <div className="glass-panel px-3 py-2 rounded-xl text-xs flex items-center space-x-3 text-slate-300 shadow-xl border border-slate-800">
           <div className="flex items-center space-x-1.5">
             <Box className="w-4 h-4 text-cyan-400" />
-            <span className="font-semibold text-slate-200">Three.js 3D Volumetric Engine</span>
+            <span className="font-semibold text-slate-100">Three.js 3D Hydrodynamic Inundation</span>
           </div>
-          <span className="text-slate-500">•</span>
-          <span className="text-slate-400">Click & Drag to rotate camera</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-cyan-300 font-mono font-medium">{gisData.river} — {gisData.location}</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-slate-400">Drag to Orbit</span>
+        </div>
+
+        {/* Real Landmark Labels Overlay Banner */}
+        <div className="glass-panel px-2.5 py-1.5 rounded-lg text-[11px] text-slate-400 flex items-center space-x-2 border border-slate-800/80">
+          <span className="flex items-center space-x-1 text-slate-300">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span>Prakasam Barrage Gorge</span>
+          </span>
+          <span>•</span>
+          <span className="text-amber-300">Indrakeeladri (140m)</span>
+          <span>•</span>
+          <span className="text-rose-400">Krishna Lanka Lowlands</span>
+          <span>•</span>
+          <span className="text-emerald-400">Tadepalli South Bank</span>
         </div>
       </div>
 
@@ -247,21 +401,35 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       <div className="absolute top-4 right-4 z-10 glass-panel p-1.5 rounded-xl flex items-center space-x-1 border border-slate-800 shadow-xl">
         <button
           onClick={() => setCameraPreset('iso')}
-          className="px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            activePreset === 'iso' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
+          }`}
         >
           Isometric (45°)
         </button>
         <button
           onClick={() => setCameraPreset('top')}
-          className="px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            activePreset === 'top' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
+          }`}
         >
           Top-Down (90°)
         </button>
         <button
-          onClick={() => setCameraPreset('low')}
-          className="px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+          onClick={() => setCameraPreset('river')}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            activePreset === 'river' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
+          }`}
         >
-          Low Bank View
+          Barrage View
+        </button>
+        <button
+          onClick={() => setCameraPreset('temple')}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            activePreset === 'temple' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          Indrakeeladri View
         </button>
       </div>
     </div>
