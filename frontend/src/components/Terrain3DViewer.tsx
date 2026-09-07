@@ -74,15 +74,15 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
   const dem = gisData.dem_grid;
   const minElev = gisData.min_elevation;
 
-  // Architectural / Engineering Callout Definitions
+  // Architectural / Engineering Callout Definitions (Calibrated to Real GPS Coordinates)
   const callouts: CalloutDef[] = useMemo(() => [
     {
       id: 'krishna_inflow',
       category: 'hydrology',
       title: 'KRISHNA RIVER INFLOW',
       subtitle: 'Upstream Discharge Source (NW Reach)',
-      gridXRatio: 0.16,
-      gridYRatio: 0.22,
+      gridXRatio: 0.05,
+      gridYRatio: 0.04,
       badgeType: 'inflow',
       cardOffset: { x: -160, y: -110 },
       cameraFocus: { pos: [-35, 45, 10], target: [-30, 2, -25] }
@@ -92,8 +92,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'infrastructure',
       title: 'PRAKASAM BARRAGE & REGULATOR',
       subtitle: '70 Radial Gates / Hydraulic Control',
-      gridXRatio: 0.48,
-      gridYRatio: 0.48,
+      gridXRatio: 0.2857,
+      gridYRatio: 0.5583,
       badgeType: 'barrage',
       cardOffset: { x: -180, y: -90 },
       cameraFocus: { pos: [-15, 32, 45], target: [0, 2, 0] }
@@ -103,8 +103,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'terrain',
       title: 'INDRAKEELADRI HILL (TEMPLE RIDGE)',
       subtitle: 'Natural Barrier & Evacuation High Ground',
-      gridXRatio: 0.32,
-      gridYRatio: 0.38,
+      gridXRatio: 0.2971,
+      gridYRatio: 0.4417,
       badgeType: 'hill',
       cardOffset: { x: -170, y: -130 },
       cameraFocus: { pos: [-45, 48, -25], target: [-15, 8, -12] }
@@ -114,8 +114,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'infrastructure',
       title: 'VIJAYAWADA URBAN CENTER',
       subtitle: 'North Bank High-Density Zone / GGH Hospital',
-      gridXRatio: 0.65,
-      gridYRatio: 0.32,
+      gridXRatio: 0.5714,
+      gridYRatio: 0.4167,
       badgeType: 'urban',
       cardOffset: { x: 90, y: -120 },
       cameraFocus: { pos: [35, 45, 10], target: [15, 4, -18] }
@@ -125,8 +125,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'risk',
       title: 'KRISHNA LANKA LOWLANDS',
       subtitle: 'High-Risk Embankment Overflow Depression',
-      gridXRatio: 0.68,
-      gridYRatio: 0.48,
+      gridXRatio: 0.5200,
+      gridYRatio: 0.5500,
       badgeType: 'lowland',
       cardOffset: { x: 100, y: -80 },
       cameraFocus: { pos: [25, 30, 55], target: [18, 2, -2] }
@@ -136,8 +136,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'risk',
       title: 'TADEPALLI & UNDAVALLI BASIN',
       subtitle: 'South Bank Peri-Urban Floodplain',
-      gridXRatio: 0.54,
-      gridYRatio: 0.72,
+      gridXRatio: 0.4800,
+      gridYRatio: 0.7500,
       badgeType: 'southbank',
       cardOffset: { x: -170, y: 70 },
       cameraFocus: { pos: [20, 38, 80], target: [5, 2, 22] }
@@ -147,8 +147,8 @@ export const Terrain3DViewer: React.FC<Terrain3DViewerProps> = ({
       category: 'hydrology',
       title: 'INUNDATION PROPAGATION FRONT',
       subtitle: 'Simulated Water Depth & Spread Vector',
-      gridXRatio: 0.78,
-      gridYRatio: 0.62,
+      gridXRatio: 0.7600,
+      gridYRatio: 0.7800,
       badgeType: 'front',
       cardOffset: { x: 90, y: 60 },
       cameraFocus: { pos: [45, 35, 60], target: [25, 2, 12] }
